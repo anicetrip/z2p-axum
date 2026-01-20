@@ -1,25 +1,33 @@
+use tokio::net::TcpListener;
 use z2p_axum::run;
 
-fn spawn_app() {
-    // 注意：run() 是 async fn，返回 Future
-    let future = run(); // 获取 Future，但代码还未执行
+pub async fn spawn_app() -> String {
+    // 1. 绑定到随机端口
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind random port");
 
-    // 将 Future 交给 Tokio 在后台运行
-    let _ = tokio::spawn(async {
-        future.await.expect("服务器运行失败");
+    // 2. 获取实际端口
+    let port = listener.local_addr().unwrap().port();
+
+    // 3. 启动服务器（后台运行）
+    tokio::spawn(async move {
+        run(listener).await.expect("服务器运行失败");
     });
+
+    // 4. 返回完整的地址（例如 "http://127.0.0.1:54321"）
+    format!("http://127.0.0.1:{}", port)
 }
 
 #[tokio::test]
 async fn health_check_works() {
     // Arrange
-    spawn_app();
-
+    let address = spawn_app().await;
     let client = reqwest::Client::new();
 
     // Act
     let response = client
-        .get("http://127.0.0.1:8000/health_check")
+        .get(&format!("{}/health_check", address))
         .send()
         .await
         .expect("Failed to execute request.");
@@ -27,4 +35,5 @@ async fn health_check_works() {
     // Assert
     assert!(response.status().is_success());
     assert_eq!(Some(0), response.content_length());
+
 }

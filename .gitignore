@@ -1,1 +1,6 @@
 /target
+Cargo.lock
+.idea/modules.xml
+.gitignore
+.idea/z2p-axum.iml
+.idea/vcs.xml
