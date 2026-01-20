@@ -1,0 +1,17 @@
+[package]
+name = "z2p-axum"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+path = "src/main.rs"
+name = "z2p-axum"
+
+
+[dependencies]
+axum = "0.8.8"
+reqwest = "0.13.1"
+tokio = { version = "1.49.0", features = ["full"] }
