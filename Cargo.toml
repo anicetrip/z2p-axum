@@ -15,3 +15,4 @@ name = "z2p-axum"
 axum = "0.8.8"
 reqwest = "0.13.1"
 tokio = { version = "1.49.0", features = ["full"] }
+serde = { version = "1.0.228", features = ["derive"] }
