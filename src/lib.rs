@@ -1,3 +1,6 @@
+pub mod entity; // 新增这一行，声明 entity 模块
+
+
 use axum::{
     Form, Router,
     response::IntoResponse,
@@ -11,10 +14,10 @@ async fn health_check() -> axum::http::StatusCode {
     axum::http::StatusCode::OK
 }
 
-#[derive(serde::Deserialize)]
-struct FormData {
-    email: String,
-    name: String,
+#[derive(serde::Deserialize, Debug)] // 添加 Debug 便于日志打印
+pub struct FormData {
+    pub email: String,
+    pub name: String,
 }
 
 async fn subscribe(Form(form): Form<FormData>) -> impl IntoResponse {

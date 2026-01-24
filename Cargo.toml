@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
+name = "z2p_axum" 
 path = "src/lib.rs"
 
 [[bin]]
@@ -16,3 +17,7 @@ axum = "0.8.8"
 reqwest = "0.13.1"
 tokio = { version = "1.49.0", features = ["full"] }
 serde = { version = "1.0.228", features = ["derive"] }
+sea-orm = { version = "1.1.19", features = ["sqlx-mysql", "runtime-tokio-rustls", "macros"] }
+chrono = "0.4.43"
+uuid = { version = "1.19.0", features = ["v4"] }
+

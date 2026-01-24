@@ -1,6 +1,13 @@
 use tokio::net::TcpListener;
 use z2p_axum::run;
 
+use chrono::Utc;
+use sea_orm::{EntityTrait, Set};
+use uuid::Uuid;
+use z2p_axum::entity::prelude::*;
+
+use sea_orm::{Database};
+
 pub async fn spawn_app() -> String {
     // 1. 绑定到随机端口
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -80,4 +87,60 @@ async fn subscribe_returns_a_422_when_data_is_missing() {
             error_message
         );
     }
+}
+
+#[tokio::test]
+async fn test_entity() {
+    let active = SubscriptionsActiveModel {
+        id: Set(Uuid::new_v4().to_string()),
+        email: Set("test@example.com".to_string()),
+        name: Set("Test User".to_string()),
+        subscribed_at: Set(Utc::now().into()),
+    };
+
+    println!("{:?}", active);
+}
+
+
+
+
+#[tokio::test]
+async fn insert_subscription_works() {
+    let db = Database::connect("mysql://root:1234@localhost:3306/newsletter")
+        .await
+        .expect("connect db");
+
+    let id = Uuid::new_v4().to_string();
+    let email = format!("test-{}@example.com", Uuid::new_v4());
+
+    let active = SubscriptionsActiveModel {
+        id: Set(id.clone()),
+        email: Set(email.clone()),
+        name: Set("Test User".to_string()),
+        subscribed_at: Set(Utc::now().into()),
+    };
+
+    // ⚠️ 这里不要 expect
+    let insert_result = SubscriptionsEntity::insert(active)
+        .exec(&db)
+        .await;
+
+    match insert_result {
+        Ok(_) => {} // PostgreSQL / SQLite 会走这里
+        Err(sea_orm::DbErr::RecordNotInserted) => {
+            // MySQL + 手动主键 = 正常现象
+        }
+        Err(e) => panic!("unexpected db error: {e:?}"),
+    }
+
+    // 再查一次，才是最终裁判
+    let found = SubscriptionsEntity::find_by_id(id.clone())
+        .one(&db)
+        .await
+        .expect("query subscription");
+
+    assert!(found.is_some());
+
+    let found = found.unwrap();
+    assert_eq!(found.email, email);
 }

@@ -4,3 +4,4 @@ Cargo.lock
 .gitignore
 .idea/z2p-axum.iml
 .idea/vcs.xml
+migration/target

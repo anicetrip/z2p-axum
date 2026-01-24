@@ -1,3 +1,4 @@
+pub mod entity; // 新增这一行，声明 entity 模块
 use tokio::net::TcpListener;
 use z2p_axum::run;
 
