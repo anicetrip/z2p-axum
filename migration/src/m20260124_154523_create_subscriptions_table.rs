@@ -11,11 +11,26 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Subscriptions::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(Subscriptions::Id).uuid().not_null().primary_key())
-                    .col(ColumnDef::new(Subscriptions::Email).text().not_null().unique_key())
-                    .col(ColumnDef::new(Subscriptions::Name).text().not_null())
-                    .col(ColumnDef::new(Subscriptions::SubscribedAt).timestamp().not_null())
-                    .to_owned()
+                    .col(
+                        ColumnDef::new(Subscriptions::Id)
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
+                    .col(
+                        ColumnDef::new(Subscriptions::Email)
+                            .string()
+                            .not_null()
+                            .unique_key(),
+                    )
+                    .col(ColumnDef::new(Subscriptions::Name).string().not_null())
+                    .col(
+                        ColumnDef::new(Subscriptions::SubscribedAt)
+                            .timestamp()
+                            .not_null(),
+                    )
+                    .to_owned(),
             )
             .await
     }

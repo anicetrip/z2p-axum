@@ -11,13 +11,29 @@ path = "src/lib.rs"
 path = "src/main.rs"
 name = "z2p-axum"
 
+[dev-dependencies]
+migration = { path = "./migration" }
+
 
 [dependencies]
 axum = "0.8.8"
 reqwest = "0.13.1"
 tokio = { version = "1.49.0", features = ["full"] }
 serde = { version = "1.0.228", features = ["derive"] }
-sea-orm = { version = "1.1.19", features = ["sqlx-mysql", "runtime-tokio-rustls", "macros"] }
-chrono = "0.4.43"
-uuid = { version = "1.19.0", features = ["v4"] }
+sea-orm = { version = "1.1.19", features = [
+    "sqlx-mysql",           # MySQL 驱动
+    "runtime-tokio-native-tls",  # 改用 native-tls，兼容性更好
+    "macros",               # 实体宏
+    "with-chrono",          # 启用 Chrono 支持（用于 DateTime）
+    "with-uuid",            # 启用 UUID 支持
+    "debug-print",          # 调试输出（可选）
+] }
+chrono = { version = "0.4.43", features = ["serde"] }
+uuid = { version = "1.20.0", features = ["v4", "serde"] }
 
+config = "0.15.19"
+
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+dotenv = "0.15.0"  # 用于加载 .env 文件
+sea-orm-migration = "1.1.19"

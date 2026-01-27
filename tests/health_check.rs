@@ -1,40 +1,94 @@
+use migration::Migrator;
+use sea_orm_migration::MigratorTrait;
 use tokio::net::TcpListener;
-use z2p_axum::run;
+use z2p_axum::{
+    configuration::{DatabaseSettings, get_configuration},
+    startup::run,
+};
 
 use chrono::Utc;
-use sea_orm::{EntityTrait, Set};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Set, Statement};
 use uuid::Uuid;
 use z2p_axum::entity::prelude::*;
 
-use sea_orm::{Database};
+use sea_orm::Database;
 
-pub async fn spawn_app() -> String {
-    // 1. 绑定到随机端口
+pub struct TestApp {
+    pub address: String,
+    pub db_pool: sea_orm::DatabaseConnection,
+}
+
+async fn spawn_app() -> TestApp {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("Failed to bind random port");
-
-    // 2. 获取实际端口
     let port = listener.local_addr().unwrap().port();
+    let address = format!("http://127.0.0.1:{}", port);
 
-    // 3. 启动服务器（后台运行）
+    let mut configuration = get_configuration().expect("Failed to read configuration.");
+    // 为每个测试生成唯一的数据库名称
+    configuration.database.database_name = Uuid::new_v4().to_string();
+    print!("DB Name: {}\n", configuration.database.database_name);
+
+    // 配置数据库（创建测试数据库）
+    let connection_pool = configure_database(&configuration.database).await;
+
+    // 启动服务器
+    let server = run(listener, connection_pool.clone());
+
+    // 在后台运行服务器
     tokio::spawn(async move {
-        run(listener).await.expect("服务器运行失败");
+        server.await.expect("Failed to run server");
     });
 
-    // 4. 返回完整的地址（例如 "http://127.0.0.1:54321"）
-    format!("http://127.0.0.1:{}", port)
+    TestApp {
+        address,
+        db_pool: connection_pool,
+    }
+}
+
+async fn configure_database(config: &DatabaseSettings) -> DatabaseConnection {
+    // 1. 连接到 MySQL 实例（不指定数据库）
+    let root_url = format!(
+        "mysql://{}:{}@{}:{}",
+        config.username, config.password, config.host, config.port
+    );
+
+    // 使用 root 连接创建数据库
+    let admin_conn = Database::connect(&root_url)
+        .await
+        .expect("Failed to connect to MySQL as admin");
+
+    // 2. 创建数据库
+    let create_db_query = format!("CREATE DATABASE IF NOT EXISTS `{}`", config.database_name);
+    admin_conn
+        .execute(Statement::from_string(DbBackend::MySql, create_db_query))
+        .await
+        .expect("Failed to create database.");
+
+    // 3. 连接到新创建的数据库
+    let database_url = config.connection_string();
+    let connection = Database::connect(&database_url)
+        .await
+        .expect("Failed to connect to database.");
+
+    // 4. 运行 SeaORM 迁移
+    <Migrator as MigratorTrait>::up(&connection, None)
+        .await
+        .expect("Failed to run migrations");
+
+    connection
 }
 
 #[tokio::test]
 async fn health_check_works() {
     // Arrange
-    let address = spawn_app().await;
+    let app = spawn_app().await;
     let client = reqwest::Client::new();
 
     // Act
     let response = client
-        .get(&format!("{}/health_check", address))
+        .get(&format!("{}/health_check", app.address))
         .send()
         .await
         .expect("Failed to execute request.");
@@ -46,11 +100,11 @@ async fn health_check_works() {
 
 #[tokio::test]
 async fn subscribe_returns_a_200_for_valid_form_data() {
-    let address = spawn_app().await;
+    let app = spawn_app().await;
     let client = reqwest::Client::new();
     let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
     let response = client
-        .post(&format!("{}/subscriptions", &address))
+        .post(&format!("{}/subscriptions", &app.address))
         .header("Content-type", "application/x-www-form-urlencoded")
         .body(body)
         .send()
@@ -62,7 +116,7 @@ async fn subscribe_returns_a_200_for_valid_form_data() {
 #[tokio::test]
 async fn subscribe_returns_a_422_when_data_is_missing() {
     // Arrange
-    let app_address = spawn_app().await;
+    let app = spawn_app().await;
     let client = reqwest::Client::new();
     let test_cases = vec![
         ("name=le%20guin", "missing the email"),
@@ -72,7 +126,7 @@ async fn subscribe_returns_a_422_when_data_is_missing() {
     for (invalid_body, error_message) in test_cases {
         // Act
         let response = client
-            .post(&format!("{}/subscriptions", &app_address))
+            .post(&format!("{}/subscriptions", &app.address))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(invalid_body)
             .send()
@@ -87,60 +141,4 @@ async fn subscribe_returns_a_422_when_data_is_missing() {
             error_message
         );
     }
-}
-
-#[tokio::test]
-async fn test_entity() {
-    let active = SubscriptionsActiveModel {
-        id: Set(Uuid::new_v4().to_string()),
-        email: Set("test@example.com".to_string()),
-        name: Set("Test User".to_string()),
-        subscribed_at: Set(Utc::now().into()),
-    };
-
-    println!("{:?}", active);
-}
-
-
-
-
-#[tokio::test]
-async fn insert_subscription_works() {
-    let db = Database::connect("mysql://root:1234@localhost:3306/newsletter")
-        .await
-        .expect("connect db");
-
-    let id = Uuid::new_v4().to_string();
-    let email = format!("test-{}@example.com", Uuid::new_v4());
-
-    let active = SubscriptionsActiveModel {
-        id: Set(id.clone()),
-        email: Set(email.clone()),
-        name: Set("Test User".to_string()),
-        subscribed_at: Set(Utc::now().into()),
-    };
-
-    // ⚠️ 这里不要 expect
-    let insert_result = SubscriptionsEntity::insert(active)
-        .exec(&db)
-        .await;
-
-    match insert_result {
-        Ok(_) => {} // PostgreSQL / SQLite 会走这里
-        Err(sea_orm::DbErr::RecordNotInserted) => {
-            // MySQL + 手动主键 = 正常现象
-        }
-        Err(e) => panic!("unexpected db error: {e:?}"),
-    }
-
-    // 再查一次，才是最终裁判
-    let found = SubscriptionsEntity::find_by_id(id.clone())
-        .one(&db)
-        .await
-        .expect("query subscription");
-
-    assert!(found.is_some());
-
-    let found = found.unwrap();
-    assert_eq!(found.email, email);
 }

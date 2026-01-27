@@ -4,7 +4,7 @@ use sea_orm::entity::prelude::*;
 #[sea_orm(table_name = "subscriptions")]
 pub struct Model {
     #[sea_orm(primary_key)]
-    pub id: String,
+    pub id: i32,
     pub email: String,
     pub name: String,
     pub subscribed_at: DateTimeUtc,
