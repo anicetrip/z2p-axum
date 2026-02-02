@@ -1,49 +1,60 @@
-use crate::entity::subscription;
-use axum::Form;
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::{
+    extract::State,
+    Form,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use chrono::Utc;
-use sea_orm::ActiveValue::NotSet;
-use sea_orm::ActiveValue::Set;
-use sea_orm::DatabaseConnection;
-use sea_orm::EntityTrait;
-use uuid::Uuid;
+use sea_orm::{DatabaseConnection, ActiveModelTrait, ActiveValue};
+use serde::Deserialize;
+use tracing;
 
-#[derive(serde::Deserialize, Debug)] // 添加 Debug 便于日志打印
+#[derive(Deserialize, Debug)]
 pub struct FormData {
     pub email: String,
     pub name: String,
 }
 
+#[tracing::instrument(
+    name = "Adding a new subscriber",
+    skip(form, db),
+    fields(
+        subscriber_email = %form.email,
+        subscriber_name = %form.name
+    )
+)]
 pub async fn subscribe(
     State(db): State<DatabaseConnection>,
     Form(form): Form<FormData>,
-) -> impl IntoResponse {
-    println!("Name: {}, Email: {}", form.name, form.email);
-
-    let uuid = Uuid::new_v4().to_string();
-
-    println!("UUID: {}", uuid);
-    println!("UUID: {}, Length: {}", uuid, uuid.len());
-
-    let subscription = subscription::ActiveModel {
-        email: Set(form.email.clone()),
-        name: Set(form.name.clone()),
-        subscribed_at: Set(Utc::now()),
-        id: NotSet, // 手动设置时间
-    };
-
-    match subscription::Entity::insert(subscription).exec(&db).await {
-        Ok(result) => {
-            println!("Insert result: {:?}", result);
-            (StatusCode::OK, "Subscribed!").into_response()
-        }
-        Err(e) => {
-            println!("Failed to execute query: {:?}", e);
-            // 打印更详细的错误信息
-            eprintln!("Detailed error: {:#?}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to subscribe").into_response()
-        }
+) -> Response {
+    match insert_subscriber(&db, &form).await {
+        Ok(_) => StatusCode::OK.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+#[tracing::instrument(
+    name = "Saving new subscriber details in the database",
+    skip(form, db)
+)]
+pub async fn insert_subscriber(db: &DatabaseConnection, form: &FormData) -> Result<(), sea_orm::DbErr> {
+    use crate::entity::subscription;
+    
+    // 创建 ActiveModel - id 不设置，让数据库自增生成
+    let subscription = subscription::ActiveModel {
+        email: ActiveValue::Set(form.email.clone()),
+        name: ActiveValue::Set(form.name.clone()),
+        subscribed_at: ActiveValue::Set(Utc::now()),
+        ..Default::default()  // id 会使用默认值（数据库自增）
+    };
+    
+    // 现在可以用 insert() 了，因为 id 是自增的
+    subscription.insert(db)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to execute query: {:?}", e);
+            e
+        })?;
+    
+    Ok(())
 }

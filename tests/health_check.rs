@@ -1,15 +1,14 @@
 use migration::Migrator;
 use sea_orm_migration::MigratorTrait;
+use secrecy::ExposeSecret;
 use tokio::net::TcpListener;
 use z2p_axum::{
     configuration::{DatabaseSettings, get_configuration},
     startup::run,
 };
 
-use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Set, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
-use z2p_axum::entity::prelude::*;
 
 use sea_orm::Database;
 
@@ -51,7 +50,10 @@ async fn configure_database(config: &DatabaseSettings) -> DatabaseConnection {
     // 1. 连接到 MySQL 实例（不指定数据库）
     let root_url = format!(
         "mysql://{}:{}@{}:{}",
-        config.username, config.password, config.host, config.port
+        config.username,
+        config.password.expose_secret(),
+        config.host,
+        config.port
     );
 
     // 使用 root 连接创建数据库
@@ -67,7 +69,7 @@ async fn configure_database(config: &DatabaseSettings) -> DatabaseConnection {
         .expect("Failed to create database.");
 
     // 3. 连接到新创建的数据库
-    let database_url = config.connection_string();
+    let database_url = config.connection_string().expose_secret().to_owned();
     let connection = Database::connect(&database_url)
         .await
         .expect("Failed to connect to database.");
