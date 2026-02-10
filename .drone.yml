@@ -81,8 +81,12 @@ steps:
           if [ ! -d "$APP_DIR" ]; then
             echo "Directory not found, cloning repository..."
             git clone "$REPO_URL" "$APP_DIR"
+          elif [ ! -d "$APP_DIR/.git" ]; then
+            echo "Directory exists but is not a git repo, removing and cloning..."
+            rm -rf "$APP_DIR"
+            git clone "$REPO_URL" "$APP_DIR"
           else
-            echo "Directory exists, pulling latest code..."
+            echo "Directory exists and is a git repo, pulling latest code..."
             cd "$APP_DIR"
             git reset --hard
             git clean -fd
