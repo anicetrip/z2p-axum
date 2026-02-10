@@ -11,22 +11,14 @@ services:
     command:
       - --default-authentication-plugin=mysql_native_password
     ports:
-      - 13306
-
-volumes:
-  - name: coverage
-    host:
-      path: /www/drone/artifacts/z2p-axum
-  - name: docker_sock
-    host:
-      path: /var/run/docker.sock
+      - 13306  # container 内端口 Drone 网络可以访问
 
 steps:
   - name: wait-for-mysql
     image: mysql:8.0
     commands:
       - |
-        for i in {1..30}; do
+        for i in $(seq 1 30); do
           mysql -h mysql -uroot -p1234 -P 13306 -e "SELECT 1" && exit 0
           sleep 2
         done
@@ -36,6 +28,11 @@ steps:
     image: rust:bookworm
     environment:
       APP_ENVIRONMENT: local
+      DATABASE_HOST: mysql
+      DATABASE_PORT: 13306
+      DATABASE_USER: root
+      DATABASE_PASS: 1234
+      DATABASE_NAME: newsletter
     commands:
       - cargo test
 
@@ -43,24 +40,30 @@ steps:
     image: ghcr.io/xd009642/tarpaulin:latest
     when:
       branch:
-        - main    # 只有 main 分支跑 privileged
+        - main
       event:
         - push
     environment:
       APP_ENVIRONMENT: local
-    volumes:
-      - name: coverage
-        path: /coverage
+      DATABASE_HOST: mysql
+      DATABASE_PORT: 13306
+      DATABASE_USER: root
+      DATABASE_PASS: 1234
+      DATABASE_NAME: newsletter
     commands:
-      - cargo tarpaulin --out Html --output-dir /coverage --engine llvm --timeout 120 --exclude-files "target/*"
+      - mkdir -p /drone/src/coverage
+      - cargo tarpaulin --out Html --output-dir /drone/src/coverage --engine llvm --timeout 120 --exclude-files "target/*"
 
   - name: docker-build
     image: docker:26
-    volumes:
-      - name: docker_sock
-        path: /var/run/docker.sock
+    when:
+      branch:
+        - main
+      event:
+        - push
     commands:
-      - docker build -t z2p-axum:latest .
+      - echo "Building Docker image..."
+      - if [ "$DRONE_REPO_TRUSTED" = "true" ]; then docker build -t z2p-axum:latest .; else echo "Skipping docker build for untrusted repo"; fi
 
 trigger:
   branch:
