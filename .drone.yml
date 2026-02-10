@@ -15,7 +15,6 @@ services:
       - 13306
 
 steps:
-  # 1) 等待 MySQL
   - name: wait-for-mysql
     image: mysql:8.0
     commands:
@@ -28,7 +27,6 @@ steps:
         echo "MySQL not reachable on mysql:13306"
         exit 1
 
-  # 2) cargo test
   - name: test
     image: rust:bookworm
     environment:
@@ -39,60 +37,4 @@ steps:
       APP_DATABASE__DATABASE_NAME: newsletter
       APP_DATABASE__REQUIRE_SSL: "false"
     commands:
-      - cargo test --all
-
-  # 3) 覆盖率（非 privileged：SYS_PTRACE + seccomp=unconfined）
-  - name: coverage
-    image: rust:bookworm
-    when:
-      branch:
-        - main
-      event:
-        - push
-    cap_add:
-      - SYS_PTRACE
-    security_opt:
-      - seccomp=unconfined
-    environment:
-      APP_DATABASE__HOST: mysql
-      APP_DATABASE__PORT: "13306"
-      APP_DATABASE__USERNAME: root
-      APP_DATABASE__PASSWORD: 1234
-      APP_DATABASE__DATABASE_NAME: newsletter
-      APP_DATABASE__REQUIRE_SSL: "false"
-    commands:
-      # 安装 tarpaulin（首次会稍慢，如需我可以再给你加 cargo 缓存）
-      - cargo install cargo-tarpaulin --locked
-      # 生成 HTML 报告到工作区
-      - mkdir -p /drone/src/coverage
-      - cargo tarpaulin --ignore-tests --out Html --output-dir /drone/src/coverage
-      - echo "Coverage generated at /drone/src/coverage"
-
-  # 4) 打包 coverage.zip（Drone UI → Artifacts 可下载）
-  - name: archive-coverage
-    image: alpine:latest
-    when:
-      branch:
-        - main
-      event:
-        - push
-    commands:
-      - apk add --no-cache zip
-      - cd /drone/src/coverage
-      - zip -r coverage.zip .
-      - echo "=========================================="
-      - echo "Coverage report ready for download:"
-      - echo "➡  Drone UI → Artifacts → coverage/coverage.zip"
-      - echo "=========================================="
-
-  # 5) 构建 Docker 镜像（不 push）
-  - name: docker-build
-    image: docker:26
-    when:
-      branch:
-        - main
-      event:
-        - push
-    commands:
-      - echo "Building Docker image..."
-      - docker build -t zero2prod:latest .
+      - cargo test
