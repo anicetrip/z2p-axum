@@ -2,6 +2,27 @@ kind: pipeline
 type: docker
 name: z2p-axum-ci
 
+# 用一个共享的缓存卷（缓存 registry/git/target，极大加速编译）
+volumes:
+  - name: cargo-cache
+    host:
+      path: /var/lib/drone/cargo-cache
+
+# 先恢复缓存
+steps:
+  - name: restore-cache
+    image: drillster/drone-volume-cache
+    volumes:
+      - name: cargo-cache
+        path: /cache
+    settings:
+      restore: true
+      mount:
+        - /root/.cargo/registry
+        - /root/.cargo/git
+        - /drone/src/target
+      cache_key: cargo-{{ checksum "Cargo.lock" }}
+
 services:
   - name: mysql
     image: mysql:8.0
@@ -15,7 +36,7 @@ services:
       - 13306
 
 steps:
-  # 1) 等待 MySQL
+  # 等 MySQL
   - name: wait-for-mysql
     image: mysql:8.0
     commands:
@@ -28,7 +49,7 @@ steps:
         echo "MySQL not reachable on mysql:13306"
         exit 1
 
-  # 2) cargo test
+  # 测试（使用缓存）
   - name: test
     image: rust:bookworm
     environment:
@@ -38,10 +59,19 @@ steps:
       APP_DATABASE__PASSWORD: 1234
       APP_DATABASE__DATABASE_NAME: newsletter
       APP_DATABASE__REQUIRE_SSL: "false"
+    volumes:
+      - name: cargo-cache
+        path: /cache
     commands:
+      # 映射缓存目录（软链方式简单粗暴、稳定）
+      - mkdir -p /root/.cargo /drone/src/target /cache/registry /cache/git /cache/target
+      - ln -s /cache/registry /root/.cargo/registry || true
+      - ln -s /cache/git /root/.cargo/git || true
+      - ln -s /cache/target /drone/src/target || true
+
       - cargo test --all
 
-  # 3) 覆盖率（非 privileged：SYS_PTRACE + seccomp=unconfined）
+  # 覆盖率（LLVM 方案；不需要 privileged）
   - name: coverage
     image: rust:bookworm
     when:
@@ -49,10 +79,9 @@ steps:
         - main
       event:
         - push
-    cap_add:
-      - SYS_PTRACE
-    security_opt:
-      - seccomp=unconfined
+    volumes:
+      - name: cargo-cache
+        path: /cache
     environment:
       APP_DATABASE__HOST: mysql
       APP_DATABASE__PORT: "13306"
@@ -61,14 +90,45 @@ steps:
       APP_DATABASE__DATABASE_NAME: newsletter
       APP_DATABASE__REQUIRE_SSL: "false"
     commands:
-      # 安装 tarpaulin（首次会稍慢，如需我可以再给你加 cargo 缓存）
-      - cargo install cargo-tarpaulin --locked
-      # 生成 HTML 报告到工作区
+      # 复用缓存
+      - mkdir -p /root/.cargo /drone/src/target /cache/registry /cache/git /cache/target
+      - ln -s /cache/registry /root/.cargo/registry || true
+      - ln -s /cache/git /root/.cargo/git || true
+      - ln -s /cache/target /drone/src/target || true
+
+      # 安装 LLVM 工具并将其加入 PATH（rustup 版本，避免系统 llvm 版本不匹配）
+      - rustup component add llvm-tools-preview
+      - export HOST_TRIPLE=$(rustc -vV | sed -n 's/^host: //p')
+      - export LLVM_TOOLS_BIN="$(rustc --print sysroot)/lib/rustlib/${HOST_TRIPLE}/bin"
+      - export PATH="${LLVM_TOOLS_BIN}:$PATH"
+
+      # 开启源码级覆盖率（instrumentation）
+      - export RUSTFLAGS="-Cinstrument-coverage"
+      - export LLVM_PROFILE_FILE="prof-%p-%m.profraw"
+
+      # 跑测试生成 .profraw（会触发增量编译；已用缓存加速）
+      - cargo test --all
+
+      # 生成 HTML 报告（把你的二进制名替换为实际名称）
       - mkdir -p /drone/src/coverage
-      - cargo tarpaulin --ignore-tests --out Html --output-dir /drone/src/coverage
+      - llvm-profdata merge -sparse prof-*.profraw -o /drone/src/coverage/coverage.profdata
+
+      # 如果你是二进制项目（假设名为 'z2p-axum'），使用相应路径：
+      # - llvm-cov show target/debug/z2p-axum \
+      #   -instr-profile=/drone/src/coverage/coverage.profdata \
+      #   -output-dir=/drone/src/coverage \
+      #   -format=html
+
+      # 如果是 workspace/有多个二进制/库，使用 'llvm-cov show --object ...' 多次或:
+      - llvm-cov show \
+          $(find target/debug -maxdepth 1 -type f -executable -printf '%p ') \
+          -instr-profile=/drone/src/coverage/coverage.profdata \
+          -output-dir=/drone/src/coverage \
+          -format=html || true
+
       - echo "Coverage generated at /drone/src/coverage"
 
-  # 4) 打包 coverage.zip（Drone UI → Artifacts 可下载）
+  # 打包 report 提供下载
   - name: archive-coverage
     image: alpine:latest
     when:
@@ -85,14 +145,46 @@ steps:
       - echo "➡  Drone UI → Artifacts → coverage/coverage.zip"
       - echo "=========================================="
 
-  # 5) 构建 Docker 镜像（不 push）
-  - name: docker-build
-    image: docker:26
+  # 保存缓存
+  - name: rebuild-cache
+    image: drillster/drone-volume-cache
+    volumes:
+      - name: cargo-cache
+        path: /cache
+    settings:
+      rebuild: true
+      mount:
+        - /root/.cargo/registry
+        - /root/.cargo/git
+        - /drone/src/target
+      cache_key: cargo-{{ checksum "Cargo.lock" }}
+
+  # ✅ 使用 Kaniko 构建镜像（无需 privileged、无需 Docker 守护进程）
+  - name: kaniko-build
+    image: gcr.io/kaniko-project/executor:latest
+    when:
+      branch:
+        - main
+      event:
+        - push
+    # 如果你只是要验证能构建，通过 --no-push 关闭推送
+    commands:
+      # 将镜像打成本地 tar，作为 artifact（可选）
+      # 1) 构建但不推送
+      - /kaniko/executor --no-push --context $DRONE_WORKSPACE --dockerfile Dockerfile --destination example.com/unused/z2p-axum:ci
+      # 2) 额外产出镜像 tar（可下载、可本地加载 docker load）
+      - /kaniko/executor --tar-path /drone/src/image.tar --context $DRONE_WORKSPACE --dockerfile Dockerfile --destination example.com/unused/z2p-axum:ci
+      - echo "Built image tar at /drone/src/image.tar"
+
+  # （可选）把镜像 tar 打包或直接保留在 artifacts
+  - name: archive-image
+    image: alpine:latest
     when:
       branch:
         - main
       event:
         - push
     commands:
-      - echo "Building Docker image..."
-      - docker build -t zero2prod:latest .
+      - cd /drone/src
+      - ls -lh image.tar || true
+      - echo "You can download image.tar from the Artifacts panel."
