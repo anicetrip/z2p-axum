@@ -75,7 +75,7 @@ steps:
           set -e
 
           APP_DIR="$HOME/zero2prod"
-          REPO_URL="https://github.com/你的github用户名/你的仓库.git"
+          REPO_URL="https://github.com/anicetrip/z2p-axum.git"
 
           echo "==> Prepare app directory"
           if [ ! -d "$APP_DIR" ]; then
