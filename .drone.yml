@@ -11,7 +11,7 @@ services:
     command:
       - --default-authentication-plugin=mysql_native_password
     ports:
-      - 13306  # container 内端口 Drone 网络可以访问
+      - 3306  # 使用默认端口
 
 steps:
   - name: wait-for-mysql
@@ -19,7 +19,7 @@ steps:
     commands:
       - |
         for i in $(seq 1 30); do
-          mysql -h mysql -uroot -p1234 -P 13306 -e "SELECT 1" && exit 0
+          mysql -h mysql -uroot -p1234 -P 3306 -e "SELECT 1" && exit 0
           sleep 2
         done
         exit 1
@@ -29,7 +29,7 @@ steps:
     environment:
       APP_ENVIRONMENT: local
       DATABASE_HOST: mysql
-      DATABASE_PORT: 13306
+      DATABASE_PORT: 3306
       DATABASE_USER: root
       DATABASE_PASS: 1234
       DATABASE_NAME: newsletter
@@ -46,7 +46,7 @@ steps:
     environment:
       APP_ENVIRONMENT: local
       DATABASE_HOST: mysql
-      DATABASE_PORT: 13306
+      DATABASE_PORT: 3306
       DATABASE_USER: root
       DATABASE_PASS: 1234
       DATABASE_NAME: newsletter
