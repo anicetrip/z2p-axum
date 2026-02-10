@@ -17,7 +17,7 @@ migration = { path = "./migration" }
 
 [dependencies]
 axum = "0.8.8"
-reqwest = "0.13.1"
+reqwest = "0.13.2"
 tokio = { version = "1.49.0", features = ["full"] }
 serde = { version = "1.0.228", features = ["derive"] }
 sea-orm = { version = "1.1.19", features = [
@@ -34,7 +34,7 @@ uuid = { version = "1.20.0", features = ["v4", "serde"] }
 config = "0.15.19"
 
 tracing = "0.1.44"
-dotenvy = "0.15"  # 用于加载 .env 文件
+dotenvy = "0.15.7"  # 用于加载 .env 文件
 sea-orm-migration = "1.1.19"
 
 tower = "0.5.3"
@@ -45,3 +45,5 @@ secrecy = { version = "0.10.3", features = ["serde"] }
 tracing-bunyan-formatter = "0.3.10"
 tracing-log= "0.2"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
+
+serde-aux = "4.7.0"

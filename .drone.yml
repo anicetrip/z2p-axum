@@ -1,0 +1,68 @@
+kind: pipeline
+type: docker
+name: z2p-axum-ci
+
+# 临时 MySQL 服务供测试用
+services:
+  - name: mysql
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: 1234
+      MYSQL_DATABASE: newsletter
+    command:
+      - --default-authentication-plugin=mysql_native_password
+    ports:
+      - 13306:3306  # 宿主机端口:容器端口
+
+volumes:
+  - name: coverage
+    host:
+      path: /www/drone/artifacts/z2p-axum
+  - name: docker_sock
+    host:
+      path: /var/run/docker.sock
+
+steps:
+  # 等待 MySQL 就绪
+  - name: wait-for-mysql
+    image: mysql:8.0
+    commands:
+      - |
+        for i in {1..30}; do
+          mysql -h mysql -uroot -p1234 -P 3306 -e "SELECT 1" && exit 0
+          sleep 2
+        done
+        exit 1
+
+  # Rust 测试
+  - name: test
+    image: rust:bookworm
+    environment:
+      APP_ENVIRONMENT: local
+    commands:
+      - cargo test
+
+  # Tarpaulin coverage
+  - name: coverage
+    image: ghcr.io/xd009642/tarpaulin:latest
+    privileged: true
+    environment:
+      APP_ENVIRONMENT: local
+    volumes:
+      - name: coverage
+        path: /coverage
+    commands:
+      - cargo tarpaulin --out Html --output-dir /coverage --engine llvm --timeout 120 --exclude-files "target/*"
+
+  # Docker build
+  - name: docker-build
+    image: docker:26
+    volumes:
+      - name: docker_sock
+        path: /var/run/docker.sock
+    commands:
+      - docker build -t z2p-axum:latest .
+
+trigger:
+  branch:
+    - main

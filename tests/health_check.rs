@@ -1,6 +1,5 @@
 use migration::Migrator;
 use sea_orm_migration::MigratorTrait;
-use secrecy::ExposeSecret;
 use tokio::net::TcpListener;
 use z2p_axum::{
     configuration::{DatabaseSettings, get_configuration},
@@ -25,61 +24,52 @@ async fn spawn_app() -> TestApp {
     let address = format!("http://127.0.0.1:{}", port);
 
     let mut configuration = get_configuration().expect("Failed to read configuration.");
-    // 为每个测试生成唯一的数据库名称
+
+    // 为每个测试生成唯一数据库名
     configuration.database.database_name = Uuid::new_v4().to_string();
-    print!("DB Name: {}\n", configuration.database.database_name);
 
-    // 配置数据库（创建测试数据库）
-    let connection_pool = configure_database(&configuration.database).await;
+    let db = configure_database(&configuration.database).await;
 
-    // 启动服务器
-    let server = run(listener, connection_pool.clone());
+    let server = run(listener, db.clone());
 
-    // 在后台运行服务器
     tokio::spawn(async move {
         server.await.expect("Failed to run server");
     });
 
     TestApp {
         address,
-        db_pool: connection_pool,
+        db_pool: db,
     }
 }
 
 async fn configure_database(config: &DatabaseSettings) -> DatabaseConnection {
-    // 1. 连接到 MySQL 实例（不指定数据库）
-    let root_url = format!(
-        "mysql://{}:{}@{}:{}",
-        config.username,
-        config.password.expose_secret(),
-        config.host,
-        config.port
+    // 1️⃣ 连接到 MySQL 实例（不指定数据库）
+    let admin_conn = Database::connect(config.without_db())
+        .await
+        .expect("Failed to connect to MySQL without database");
+
+    // 2️⃣ 创建测试数据库
+    let create_db_stmt = Statement::from_string(
+        DbBackend::MySql,
+        format!(r#"CREATE DATABASE `{}`"#, config.database_name),
     );
 
-    // 使用 root 连接创建数据库
-    let admin_conn = Database::connect(&root_url)
-        .await
-        .expect("Failed to connect to MySQL as admin");
-
-    // 2. 创建数据库
-    let create_db_query = format!("CREATE DATABASE IF NOT EXISTS `{}`", config.database_name);
     admin_conn
-        .execute(Statement::from_string(DbBackend::MySql, create_db_query))
+        .execute(create_db_stmt)
         .await
-        .expect("Failed to create database.");
+        .expect("Failed to create test database");
 
-    // 3. 连接到新创建的数据库
-    let database_url = config.connection_string().expose_secret().to_owned();
-    let connection = Database::connect(&database_url)
+    // 3️⃣ 连接到新数据库
+    let db_conn = Database::connect(config.with_db())
         .await
-        .expect("Failed to connect to database.");
+        .expect("Failed to connect to test database");
 
-    // 4. 运行 SeaORM 迁移
-    <Migrator as MigratorTrait>::up(&connection, None)
+    // 4️⃣ 运行迁移
+    Migrator::up(&db_conn, None)
         .await
         .expect("Failed to run migrations");
 
-    connection
+    db_conn
 }
 
 #[tokio::test]

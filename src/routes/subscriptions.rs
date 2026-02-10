@@ -1,11 +1,11 @@
 use axum::{
-    extract::State,
     Form,
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use sea_orm::{DatabaseConnection, ActiveModelTrait, ActiveValue};
+use sea_orm::{ActiveModelTrait, ActiveValue, DatabaseConnection};
 use serde::Deserialize;
 use tracing;
 
@@ -33,28 +33,26 @@ pub async fn subscribe(
     }
 }
 
-#[tracing::instrument(
-    name = "Saving new subscriber details in the database",
-    skip(form, db)
-)]
-pub async fn insert_subscriber(db: &DatabaseConnection, form: &FormData) -> Result<(), sea_orm::DbErr> {
+#[tracing::instrument(name = "Saving new subscriber details in the database", skip(form, db))]
+pub async fn insert_subscriber(
+    db: &DatabaseConnection,
+    form: &FormData,
+) -> Result<(), sea_orm::DbErr> {
     use crate::entity::subscription;
-    
+
     // 创建 ActiveModel - id 不设置，让数据库自增生成
     let subscription = subscription::ActiveModel {
         email: ActiveValue::Set(form.email.clone()),
         name: ActiveValue::Set(form.name.clone()),
         subscribed_at: ActiveValue::Set(Utc::now()),
-        ..Default::default()  // id 会使用默认值（数据库自增）
+        ..Default::default() // id 会使用默认值（数据库自增）
     };
-    
+
     // 现在可以用 insert() 了，因为 id 是自增的
-    subscription.insert(db)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to execute query: {:?}", e);
-            e
-        })?;
-    
+    subscription.insert(db).await.map_err(|e| {
+        tracing::error!("Failed to execute query: {:?}", e);
+        e
+    })?;
+
     Ok(())
 }
