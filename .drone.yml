@@ -9,11 +9,9 @@ services:
       MYSQL_ROOT_PASSWORD: 1234
       MYSQL_DATABASE: newsletter
     command:
-      # 重要：让容器内 MySQL 监听 13306 端口（默认 3306）
       - --default-authentication-plugin=mysql_native_password
       - --port=13306
     ports:
-      # 在 Drone 的服务网络中暴露 13306（仅流水线内部可见）
       - 13306
 
 steps:
@@ -32,53 +30,11 @@ steps:
   - name: test
     image: rust:bookworm
     environment:
-      APP_ENVIRONMENT: local
-      DATABASE_HOST: mysql
-      DATABASE_PORT: 13306
-      DATABASE_USER: root
-      DATABASE_PASS: 1234
-      DATABASE_NAME: newsletter
+      APP_DATABASE__HOST: mysql
+      APP_DATABASE__PORT: "13306"
+      APP_DATABASE__USERNAME: root
+      APP_DATABASE__PASSWORD: 1234
+      APP_DATABASE__DATABASE_NAME: newsletter
+      APP_DATABASE__REQUIRE_SSL: "false"
     commands:
-      # 仅在 CI 里把配置文件中的 host 从 localhost 替换为 mysql（不改端口）
-      # 这样你的应用测试仍读取 base.yaml，但能连到 CI 的 mysql 服务
-      - sed -i 's/^\(\s*host:\s*\)"localhost"/\1"mysql"/' configuration/base.yaml
-      - echo "Effective DB config in CI:"
-      - awk '/database:/{flag=1;print;next}/^[^[:space:]-]/{flag=0}flag' configuration/base.yaml
-      - rustc --version
-      - cargo --version
       - cargo test
-
-  - name: coverage
-    image: ghcr.io/xd009642/tarpaulin:latest
-    when:
-      branch:
-        - main
-      event:
-        - push
-    environment:
-      APP_ENVIRONMENT: local
-      DATABASE_HOST: mysql
-      DATABASE_PORT: 13306
-      DATABASE_USER: root
-      DATABASE_PASS: 1234
-      DATABASE_NAME: newsletter
-    commands:
-      # 覆盖率步骤也同样替换配置（与 test 步一致）
-      - sed -i 's/^\(\s*host:\s*\)"localhost"/\1"mysql"/' configuration/base.yaml
-      - mkdir -p /drone/src/coverage
-      - cargo tarpaulin --out Html --output-dir /drone/src/coverage --engine llvm --timeout 120 --exclude-files "target/*"
-
-  - name: docker-build
-    image: docker:26
-    when:
-      branch:
-        - main
-      event:
-        - push
-    commands:
-      - echo "Building Docker image..."
-      - if [ "$DRONE_REPO_TRUSTED" = "true" ]; then docker build -t z2p-axum:latest .; else echo "Skipping docker build for untrusted repo"; fi
-
-trigger:
-  branch:
-    - main
