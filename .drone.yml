@@ -64,23 +64,32 @@ steps:
     settings:
       host:
         from_secret: SSH_HOST
+      port:
+        from_secret: SSH_PORT
       username:
         from_secret: SSH_USER
       password:
         from_secret: SSH_PASSWORD
-      port:
-        from_secret: SSH_PORT
       script:
         - |
           set -e
 
+          APP_DIR="$HOME/zero2prod"
+          REPO_URL="https://github.com/你的github用户名/你的仓库.git"
+
           echo "==> Prepare app directory"
-          if [ ! -d "$HOME/zero2prod" ]; then
-            git clone https://github.com/你的github用户名/你的仓库名.git $HOME/zero2prod
+          if [ ! -d "$APP_DIR" ]; then
+            echo "Directory not found, cloning repository..."
+            git clone "$REPO_URL" "$APP_DIR"
+          else
+            echo "Directory exists, pulling latest code..."
+            cd "$APP_DIR"
+            git reset --hard
+            git clean -fd
+            git pull
           fi
 
-          cd $HOME/zero2prod
-          git pull
+          cd "$APP_DIR"
 
           echo "==> Build docker image on server"
           docker build -t zero2prod:latest .
@@ -100,9 +109,3 @@ steps:
             -e APP_DATABASE__DATABASE_NAME=$PROD_DB_NAME \
             -e APP_DATABASE__REQUIRE_SSL=false \
             zero2prod:latest
-
-          echo "==> Deploy done"
-
-trigger:
-  branch:
-    - main
