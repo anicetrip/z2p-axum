@@ -41,16 +41,18 @@ steps:
     commands:
       - cargo test --all
 
-  # 3) 覆盖率（用 rust:bookworm 安装 tarpaulin）
+  # 3) 覆盖率（非 privileged：SYS_PTRACE + seccomp=unconfined）
   - name: coverage
     image: rust:bookworm
-    # tarpaulin 需要 ptrace；首选 privileged。如果 Runner 禁止，请看下方“若无法使用 privileged”
-    privileged: true
     when:
       branch:
         - main
       event:
         - push
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
     environment:
       APP_DATABASE__HOST: mysql
       APP_DATABASE__PORT: "13306"
@@ -59,14 +61,14 @@ steps:
       APP_DATABASE__DATABASE_NAME: newsletter
       APP_DATABASE__REQUIRE_SSL: "false"
     commands:
-      # 安装 tarpaulin（--locked 更稳定；首次会稍慢，后续可配缓存加速）
+      # 安装 tarpaulin（首次会稍慢，如需我可以再给你加 cargo 缓存）
       - cargo install cargo-tarpaulin --locked
-      # 生成 HTML 报告到 /drone/src/coverage（Drone 的工作区）
+      # 生成 HTML 报告到工作区
       - mkdir -p /drone/src/coverage
       - cargo tarpaulin --ignore-tests --out Html --output-dir /drone/src/coverage
       - echo "Coverage generated at /drone/src/coverage"
 
-  # 4) 打包 coverage.zip，便于在 Drone Web UI → Artifacts 下载
+  # 4) 打包 coverage.zip（Drone UI → Artifacts 可下载）
   - name: archive-coverage
     image: alpine:latest
     when:
@@ -83,7 +85,7 @@ steps:
       - echo "➡  Drone UI → Artifacts → coverage/coverage.zip"
       - echo "=========================================="
 
-  # 5) 构建 Docker 镜像（不 push；与 trusted 无关）
+  # 5) 构建 Docker 镜像（不 push）
   - name: docker-build
     image: docker:26
     when:
@@ -94,3 +96,4 @@ steps:
     commands:
       - echo "Building Docker image..."
       - docker build -t zero2prod:latest .
+``
