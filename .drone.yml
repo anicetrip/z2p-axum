@@ -2,18 +2,6 @@ kind: pipeline
 type: docker
 name: z2p-axum-ci
 
-# ---------------------------
-# Cargo 缓存卷（持久化在 Drone 主机上）
-# ---------------------------
-volumes:
-  - name: cargo-cache
-    host:
-      # 你可以改为任意 Drone 主机上的可写目录
-      path: /var/lib/drone/cargo-cache
-  - name: cargo-target
-    host:
-      path: /var/lib/drone/cargo-target
-
 services:
   - name: mysql
     image: mysql:8.0
@@ -43,36 +31,31 @@ steps:
         exit 1
 
   # ---------------------------
-  # 2️⃣ cargo test（带缓存）
+  # 2️⃣ cargo fmt --check
+  # ---------------------------
+  - name: fmt-check
+    image: rust:bookworm
+    commands:
+      - rustup component add rustfmt
+      - cargo fmt --all -- --check
+
+  # ---------------------------
+  # 3️⃣ cargo test
   # ---------------------------
   - name: test
     image: rust:bookworm
     environment:
-      # 覆盖你的配置，连 CI 内的 mysql 服务
       APP_DATABASE__HOST: mysql
       APP_DATABASE__PORT: "13306"
       APP_DATABASE__USERNAME: root
       APP_DATABASE__PASSWORD: 1234
       APP_DATABASE__DATABASE_NAME: newsletter
       APP_DATABASE__REQUIRE_SSL: "false"
-      # 统一缓存位置（容器内路径）
-      CARGO_HOME: /drone/cargo
-      CARGO_TARGET_DIR: /drone/target
-    volumes:
-      - name: cargo-cache
-        path: /drone/cargo
-      - name: cargo-target
-        path: /drone/target
     commands:
-      - rustc --version
-      - cargo --version
-      # 预热依赖缓存（避免 test 步骤第一次编译时拉取索引/依赖）
-      - cargo fetch
-      # 编译+测试（利用缓存）
       - cargo test --all
 
   # ---------------------------
-  # 3️⃣ tarpaulin 覆盖率（带缓存）
+  # 4️⃣ tarpaulin 覆盖率报告
   # ---------------------------
   - name: coverage
     image: ghcr.io/xd009642/tarpaulin:latest
@@ -88,23 +71,12 @@ steps:
       APP_DATABASE__PASSWORD: 1234
       APP_DATABASE__DATABASE_NAME: newsletter
       APP_DATABASE__REQUIRE_SSL: "false"
-      # 与 test 步骤一致的缓存路径（非常重要）
-      CARGO_HOME: /drone/cargo
-      CARGO_TARGET_DIR: /drone/target
-    volumes:
-      - name: cargo-cache
-        path: /drone/cargo
-      - name: cargo-target
-        path: /drone/target
     commands:
       - mkdir -p /drone/src/coverage
-      # 保险起见再 fetch 一次（不同镜像，保证缓存可用）
-      - cargo fetch
       - cargo tarpaulin --ignore-tests --out Html --output-dir /drone/src/coverage
-      - echo "Coverage generated at /drone/src/coverage"
 
   # ---------------------------
-  # 4️⃣ 打包 coverage.zip（便于下载）
+  # 5️⃣ 报告打包成 coverage.zip
   # ---------------------------
   - name: archive-coverage
     image: alpine:latest
@@ -117,13 +89,9 @@ steps:
       - apk add zip
       - cd /drone/src/coverage
       - zip -r coverage.zip .
-      - echo "=========================================="
-      - echo "Coverage report ready for download:"
-      - echo "➡  Drone UI → Artifacts → coverage/coverage.zip"
-      - echo "=========================================="
 
   # ---------------------------
-  # 5️⃣ 构建 Docker 镜像（不 push，无 trusted）
+  # 6️⃣ 构建 Docker 镜像（不 push，无需 trusted）
   # ---------------------------
   - name: docker-build
     image: docker:26
