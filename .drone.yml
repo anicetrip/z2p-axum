@@ -1,6 +1,6 @@
 kind: pipeline
 type: docker
-name: z2p-axum-ci
+name: z2p-axum-ci-cd
 
 services:
   - name: mysql
@@ -15,6 +15,9 @@ services:
       - 13306
 
 steps:
+  # =====================
+  # 1️⃣ 等 MySQL 就绪（CI 用）
+  # =====================
   - name: wait-for-mysql
     image: mysql:8.0
     commands:
@@ -27,6 +30,9 @@ steps:
         echo "MySQL not reachable on mysql:13306"
         exit 1
 
+  # =====================
+  # 2️⃣ 测试（可暂时关闭）
+  # =====================
   # - name: test
   #   image: rust:bookworm
   #   environment:
@@ -39,20 +45,9 @@ steps:
   #   commands:
   #     - cargo test
 
-
-
- # =====================
-  # 3️⃣ 构建 Docker 镜像
   # =====================
-  - name: docker-build
-    image: docker:27-cli
-    commands:
-      - docker build -t zero2prod:latest .
-      - docker save zero2prod:latest > zero2prod.tar
-
-
-
-
+  # 3️⃣ 部署（服务器 build & run）
+  # =====================
   - name: deploy
     image: appleboy/drone-ssh
     environment:
@@ -74,15 +69,28 @@ steps:
       password:
         from_secret: SSH_PASSWORD
       script:
-        - mkdir -p ~/zero2prod
-        - cd ~/zero2prod
-        - docker load < /drone/src/zero2prod.tar
-        - docker stop zero2prod || true
-        - docker rm zero2prod || true
         - |
+          set -e
+
+          echo "==> Prepare app directory"
+          if [ ! -d "$HOME/zero2prod" ]; then
+            git clone https://github.com/你的github用户名/你的仓库名.git $HOME/zero2prod
+          fi
+
+          cd $HOME/zero2prod
+          git pull
+
+          echo "==> Build docker image on server"
+          docker build -t zero2prod:latest .
+
+          echo "==> Restart container"
+          docker stop zero2prod || true
+          docker rm zero2prod || true
+
           docker run -d \
             --name zero2prod \
             -p 18000:8000 \
+            -e APP_ENVIRONMENT=production \
             -e APP_DATABASE__HOST=$PROD_DB_HOST \
             -e APP_DATABASE__PORT=$PROD_DB_PORT \
             -e APP_DATABASE__USERNAME=$PROD_DB_USER \
@@ -90,3 +98,9 @@ steps:
             -e APP_DATABASE__DATABASE_NAME=$PROD_DB_NAME \
             -e APP_DATABASE__REQUIRE_SSL=false \
             zero2prod:latest
+
+          echo "==> Deploy done"
+
+trigger:
+  branch:
+    - main
