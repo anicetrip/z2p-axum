@@ -2,6 +2,28 @@ kind: pipeline
 type: docker
 name: z2p-axum-ci
 
+# 用一个共享的缓存卷
+volumes:
+  - name: cargo-cache
+    host:
+      path: /var/lib/drone/cargo-cache
+
+steps:
+  # Restore cache
+  - name: restore-cache
+    image: drillster/drone-volume-cache
+    volumes:
+      - name: cargo-cache
+        path: /cache
+    settings:
+      restore: true
+      mount:
+        - /root/.cargo/registry
+        - /root/.cargo/git
+        - /drone/src/target
+      cache_key: cargo-{{ checksum "Cargo.lock" }}
+
+  # MySQL service
 services:
   - name: mysql
     image: mysql:8.0
@@ -15,7 +37,7 @@ services:
       - 13306
 
 steps:
-  # 1) 等待 MySQL
+  # Wait for MySQL
   - name: wait-for-mysql
     image: mysql:8.0
     commands:
@@ -25,10 +47,9 @@ steps:
           mysql -h mysql -uroot -p1234 -P 13306 -e "SELECT 1" && exit 0
           sleep 2
         done
-        echo "MySQL not reachable on mysql:13306"
         exit 1
 
-  # 2) cargo test
+  # Run tests (benefits from cache!)
   - name: test
     image: rust:bookworm
     environment:
@@ -38,10 +59,19 @@ steps:
       APP_DATABASE__PASSWORD: 1234
       APP_DATABASE__DATABASE_NAME: newsletter
       APP_DATABASE__REQUIRE_SSL: "false"
+    volumes:
+      - name: cargo-cache
+        path: /cache
     commands:
+      # map cache paths
+      - ln -s /cache/registry /root/.cargo/registry || true
+      - ln -s /cache/git /root/.cargo/git || true
+      - ln -s /cache/target /drone/src/target || true
+
+      # now build with cache
       - cargo test --all
 
-  # 3) 覆盖率（非 privileged：SYS_PTRACE + seccomp=unconfined）
+  # Coverage (no privileged, use LLVM)
   - name: coverage
     image: rust:bookworm
     when:
@@ -49,10 +79,9 @@ steps:
         - main
       event:
         - push
-    cap_add:
-      - SYS_PTRACE
-    security_opt:
-      - seccomp=unconfined
+    volumes:
+      - name: cargo-cache
+        path: /cache
     environment:
       APP_DATABASE__HOST: mysql
       APP_DATABASE__PORT: "13306"
@@ -61,14 +90,27 @@ steps:
       APP_DATABASE__DATABASE_NAME: newsletter
       APP_DATABASE__REQUIRE_SSL: "false"
     commands:
-      # 安装 tarpaulin（首次会稍慢，如需我可以再给你加 cargo 缓存）
-      - cargo install cargo-tarpaulin --locked
-      # 生成 HTML 报告到工作区
-      - mkdir -p /drone/src/coverage
-      - cargo tarpaulin --ignore-tests --out Html --output-dir /drone/src/coverage
-      - echo "Coverage generated at /drone/src/coverage"
+      # map cache
+      - ln -s /cache/registry /root/.cargo/registry || true
+      - ln -s /cache/git /root/.cargo/git || true
+      - ln -s /cache/target /drone/src/target || true
 
-  # 4) 打包 coverage.zip（Drone UI → Artifacts 可下载）
+      # llvm-coverage
+      - rustup component add llvm-tools-preview
+      - export RUSTFLAGS="-Cinstrument-coverage"
+      - export LLVM_PROFILE_FILE="prof-%p-%m.profraw"
+      - cargo test --all
+
+      # generate report
+      - mkdir -p /drone/src/coverage
+      - llvm-profdata merge -sparse prof-*.profraw -o /drone/src/coverage/coverage.profdata
+      - llvm-cov show \
+          target/debug/your_binary \
+          -instr-profile=/drone/src/coverage/coverage.profdata \
+          -output-dir=/drone/src/coverage \
+          -format=html
+
+  # Archive coverage report
   - name: archive-coverage
     image: alpine:latest
     when:
@@ -77,15 +119,25 @@ steps:
       event:
         - push
     commands:
-      - apk add --no-cache zip
+      - apk add zip
       - cd /drone/src/coverage
       - zip -r coverage.zip .
-      - echo "=========================================="
-      - echo "Coverage report ready for download:"
-      - echo "➡  Drone UI → Artifacts → coverage/coverage.zip"
-      - echo "=========================================="
 
-  # 5) 构建 Docker 镜像（不 push）
+  # Rebuild cache
+  - name: rebuild-cache
+    image: drillster/drone-volume-cache
+    volumes:
+      - name: cargo-cache
+        path: /cache
+    settings:
+      rebuild: true
+      mount:
+        - /root/.cargo/registry
+        - /root/.cargo/git
+        - /drone/src/target
+      cache_key: cargo-{{ checksum "Cargo.lock" }}
+
+  # Build Docker image
   - name: docker-build
     image: docker:26
     when:
@@ -94,5 +146,4 @@ steps:
       event:
         - push
     commands:
-      - echo "Building Docker image..."
       - docker build -t zero2prod:latest .
