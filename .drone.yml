@@ -15,6 +15,9 @@ services:
       - 13306
 
 steps:
+  # ---------------------------
+  # 1️⃣ 等待 MySQL
+  # ---------------------------
   - name: wait-for-mysql
     image: mysql:8.0
     commands:
@@ -27,6 +30,18 @@ steps:
         echo "MySQL not reachable on mysql:13306"
         exit 1
 
+  # ---------------------------
+  # 2️⃣ cargo fmt --check
+  # ---------------------------
+  - name: fmt-check
+    image: rust:bookworm
+    commands:
+      - rustup component add rustfmt
+      - cargo fmt --all -- --check
+
+  # ---------------------------
+  # 3️⃣ cargo test
+  # ---------------------------
   - name: test
     image: rust:bookworm
     environment:
@@ -37,4 +52,54 @@ steps:
       APP_DATABASE__DATABASE_NAME: newsletter
       APP_DATABASE__REQUIRE_SSL: "false"
     commands:
-      - cargo test
+      - cargo test --all
+
+  # ---------------------------
+  # 4️⃣ tarpaulin 覆盖率报告
+  # ---------------------------
+  - name: coverage
+    image: ghcr.io/xd009642/tarpaulin:latest
+    when:
+      branch:
+        - main
+      event:
+        - push
+    environment:
+      APP_DATABASE__HOST: mysql
+      APP_DATABASE__PORT: "13306"
+      APP_DATABASE__USERNAME: root
+      APP_DATABASE__PASSWORD: 1234
+      APP_DATABASE__DATABASE_NAME: newsletter
+      APP_DATABASE__REQUIRE_SSL: "false"
+    commands:
+      - mkdir -p /drone/src/coverage
+      - cargo tarpaulin --ignore-tests --out Html --output-dir /drone/src/coverage
+
+  # ---------------------------
+  # 5️⃣ 报告打包成 coverage.zip
+  # ---------------------------
+  - name: archive-coverage
+    image: alpine:latest
+    when:
+      branch:
+        - main
+      event:
+        - push
+    commands:
+      - apk add zip
+      - cd /drone/src/coverage
+      - zip -r coverage.zip .
+
+  # ---------------------------
+  # 6️⃣ 构建 Docker 镜像（不 push，无需 trusted）
+  # ---------------------------
+  - name: docker-build
+    image: docker:26
+    when:
+      branch:
+        - main
+      event:
+        - push
+    commands:
+      - echo "Building Docker image..."
+      - docker build -t zero2prod:latest .
