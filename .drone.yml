@@ -2,7 +2,6 @@ kind: pipeline
 type: docker
 name: z2p-axum-ci
 
-# 临时 MySQL 服务供测试用
 services:
   - name: mysql
     image: mysql:8.0
@@ -12,7 +11,7 @@ services:
     command:
       - --default-authentication-plugin=mysql_native_password
     ports:
-      - 13306   # Drone 内部使用容器端口
+      - 13306
 
 volumes:
   - name: coverage
@@ -23,7 +22,6 @@ volumes:
       path: /var/run/docker.sock
 
 steps:
-  # 等待 MySQL 就绪
   - name: wait-for-mysql
     image: mysql:8.0
     commands:
@@ -34,7 +32,6 @@ steps:
         done
         exit 1
 
-  # Rust 测试
   - name: test
     image: rust:bookworm
     environment:
@@ -42,10 +39,14 @@ steps:
     commands:
       - cargo test
 
-  # Tarpaulin coverage
   - name: coverage
     image: ghcr.io/xd009642/tarpaulin:latest
     privileged: true
+    when:
+      branch:
+        - main    # 只有 main 分支跑 privileged
+      event:
+        - push
     environment:
       APP_ENVIRONMENT: local
     volumes:
@@ -54,7 +55,6 @@ steps:
     commands:
       - cargo tarpaulin --out Html --output-dir /coverage --engine llvm --timeout 120 --exclude-files "target/*"
 
-  # Docker build
   - name: docker-build
     image: docker:26
     volumes:
