@@ -96,4 +96,3 @@ steps:
     commands:
       - echo "Building Docker image..."
       - docker build -t zero2prod:latest .
-``
