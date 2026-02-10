@@ -41,7 +41,6 @@ steps:
 
   - name: coverage
     image: ghcr.io/xd009642/tarpaulin:latest
-    privileged: true
     when:
       branch:
         - main    # 只有 main 分支跑 privileged
