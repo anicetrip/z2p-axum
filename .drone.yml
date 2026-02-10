@@ -31,22 +31,7 @@ steps:
         exit 1
 
   # =====================
-  # 2️⃣ 测试（可暂时关闭）
-  # =====================
-  # - name: test
-  #   image: rust:bookworm
-  #   environment:
-  #     APP_DATABASE__HOST: mysql
-  #     APP_DATABASE__PORT: "13306"
-  #     APP_DATABASE__USERNAME: root
-  #     APP_DATABASE__PASSWORD: 1234
-  #     APP_DATABASE__DATABASE_NAME: newsletter
-  #     APP_DATABASE__REQUIRE_SSL: "false"
-  #   commands:
-  #     - cargo test
-
-  # =====================
-  # 3️⃣ 部署（服务器 build & run）
+  # 2️⃣ 部署（服务器上 build & run）
   # =====================
   - name: deploy
     image: appleboy/drone-ssh
@@ -72,7 +57,7 @@ steps:
         from_secret: SSH_PASSWORD
       script:
         - |
-          set -e
+          set -euo pipefail
 
           APP_DIR="$HOME/zero2prod"
           REPO_URL="https://github.com/anicetrip/z2p-axum.git"
@@ -95,13 +80,35 @@ steps:
 
           cd "$APP_DIR"
 
-          echo "==> Build docker image on server"
+          # =====================
+          # 1️⃣ Build Rust release binary
+          # =====================
+          echo "==> Build Rust release binary"
+          export CARGO_HOME="$HOME/.cargo"  # 持久化 Cargo 缓存
+          mkdir -p "$CARGO_HOME"
+
+          cargo build --release
+          strip target/release/z2p-axum
+
+          # =====================
+          # 2️⃣ Build Docker image
+          # =====================
+          echo "==> Build minimal Docker image"
           docker build -t zero2prod:latest .
 
-          echo "==> Restart container"
+          # =====================
+          # 3️⃣ Cleanup old files & Docker
+          # =====================
+          echo "==> Cleanup old Docker and tar files"
           docker stop zero2prod || true
           docker rm zero2prod || true
+          docker image rm zero2prod:latest || true
+          find "$APP_DIR" -maxdepth 1 -name "zero2prod-*.tar" ! -name "zero2prod.tar" -delete
 
+          # =====================
+          # 4️⃣ Run container
+          # =====================
+          echo "==> Run container zero2prod"
           docker run -d \
             --name zero2prod \
             -p 18000:8000 \
@@ -113,3 +120,8 @@ steps:
             -e APP_DATABASE__DATABASE_NAME=$PROD_DB_NAME \
             -e APP_DATABASE__REQUIRE_SSL=false \
             zero2prod:latest
+
+volumes:
+  - name: cargo_cache
+    host:
+      path: /www/drone/cargo_cache  # 持久化 Cargo 缓存
