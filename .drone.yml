@@ -9,7 +9,6 @@ steps:
   - name: cargo-build
     image: rust:bookworm
     commands:
-      - cargo fmt --all
       - cargo test --all
       - cargo build --release
       - strip target/release/z2p-axum
