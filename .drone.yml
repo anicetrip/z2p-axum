@@ -55,6 +55,27 @@ steps:
       - rustup component add rustfmt
       - cargo fmt --all -- --check
 
+  # -------- 新增：按需准备 Cargo.lock（存在则 fetch 预热；不存在则生成） --------
+  - name: prepare-cargo-lock
+    image: rust:bookworm
+    volumes:
+      - name: cargo-registry
+        path: /usr/local/cargo/registry
+      - name: cargo-git
+        path: /usr/local/cargo/git
+      - name: cargo-target
+        path: /drone/src/target
+    commands:
+      - |
+        set -e
+        if [ -f Cargo.lock ]; then
+          echo "Cargo.lock exists. Warming cache with --locked fetch..."
+          cargo fetch --locked --manifest-path Cargo.toml
+        else
+          echo "Cargo.lock not found. Generating lockfile..."
+          cargo generate-lockfile
+        fi
+
   - name: test
     image: rust:bookworm
     environment:
@@ -72,7 +93,13 @@ steps:
       - name: cargo-target
         path: /drone/src/target
     commands:
-      - cargo test --all --locked --workspace
+      - |
+        set -e
+        if [ -f Cargo.lock ]; then
+          cargo test --all --workspace --locked
+        else
+          cargo test --all --workspace
+        fi
 
   - name: coverage
     image: xd009642/tarpaulin:latest
@@ -94,10 +121,16 @@ steps:
         path: /drone/src/target
     commands:
       - |
+        set -e
+        # 有锁则确保依赖已抓取；随后运行 tarpaulin（会触发构建/测试）
+        if [ -f Cargo.lock ]; then
+          cargo fetch --locked --manifest-path Cargo.toml
+        fi
         cargo tarpaulin --out Html --out Lcov
         test -f tarpaulin-report.html || { echo "report missing"; exit 1; }
         echo "Coverage HTML: ./tarpaulin-report.html"
 
+  # -------- CI 内：Kaniko 将镜像导出为 tar（不推送） --------
   - name: build-image-tar
     image: gcr.io/kaniko-project/executor:debug
     environment:
@@ -113,6 +146,7 @@ steps:
           --tarPath=/drone/src/${TAR_NAME}
         ls -lah /drone/src | grep "${TAR_NAME}" || { echo "image tar missing"; exit 1; }
 
+  # -------- 报告/镜像传输到目标机 /tmp（避免 YAML 中 ~ 的解析问题） --------
   - name: scp-coverage-to-tmp
     image: appleboy/drone-scp
     when:
@@ -162,6 +196,7 @@ steps:
       overwrite: true
       command_timeout: 3m
 
+  # 可选：若不再需要把源码同步到目标机，可删除此步
   - name: scp-code
     image: appleboy/drone-scp
     when:
@@ -185,6 +220,7 @@ steps:
       overwrite: true
       command_timeout: 2m
 
+  # -------- CD：将 /tmp 工件移动到 ~，本地 load & run，健康检查与清理 --------
   - name: deploy
     image: appleboy/drone-ssh
     when:
@@ -204,7 +240,7 @@ steps:
         from_secret: PROD_DB_PASSWORD
       PROD_DB_NAME:
         from_secret: PROD_DB_NAME
-      # 生产默认不启用 SSL；后续启用 TLS 时把值改为 "true"
+      # 生产默认不启用 SSL；未来启用 TLS 时将其改为 "true"
       PROD_DB_REQUIRE_SSL: "false"
     settings:
       host:
