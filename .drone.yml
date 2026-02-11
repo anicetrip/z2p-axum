@@ -6,7 +6,7 @@ platform:
   os: linux
   arch: amd64
 
-# 统一的管道级环境：让所有步骤共享同一路径（便于命中缓存）
+# 统一环境：让所有步骤共享相同的 Cargo/Rustup/target 路径以命中缓存
 environment:
   CARGO_HOME: /opt/cargo
   RUSTUP_HOME: /opt/rustup
@@ -24,7 +24,7 @@ services:
     ports:
       - 13306
 
-# 宿主机缓存卷
+# 宿主机缓存卷（持久化 CARGO_HOME、RUSTUP_HOME、target）
 volumes:
   - name: cargo-home
     host:
@@ -49,8 +49,7 @@ steps:
         echo "MySQL not reachable on mysql:13306"
         exit 1
 
-  # —— 新增：初始化 rust 工具链（安装 stable + 设为默认 + 安装 rustfmt）——
-  # 使用 minimal profile 更适合 CI，避免下载不必要组件
+  # 初始化 Rust 工具链（Nightly + minimal profile）并缓存到宿主卷
   - name: init-rustup
     image: rust:bookworm
     volumes:
@@ -64,9 +63,9 @@ steps:
       - |
         set -e
         rustup set profile minimal
-        rustup toolchain install stable --profile minimal -y
-        rustup default stable
-        rustup component add rustfmt
+        rustup toolchain install nightly --profile minimal
+        rustup default nightly
+        rustup component add rustfmt --toolchain nightly
         rustup show
         cargo -V
         rustc -V
@@ -83,7 +82,7 @@ steps:
     commands:
       - cargo fmt --all -- --check
 
-  # 按需准备 Cargo.lock（存在则 fetch 预热；不存在则生成）
+  # 按需准备锁文件（存在则 fetch 预热；不存在则生成）
   - name: prepare-cargo-lock
     image: rust:bookworm
     volumes:
@@ -157,12 +156,11 @@ steps:
         test -f tarpaulin-report.html || { echo "report missing"; exit 1; }
         echo "Coverage HTML: ./tarpaulin-report.html"
 
-  # CI 内：Kaniko 将镜像导出为 tar（不推送）
+  # CI 内：Kaniko 离线导出镜像（不会推送，但 --destination 必须是合法的仓库名:标签）
   - name: build-image-tar
     image: gcr.io/kaniko-project/executor:debug
     environment:
-      # 显式完整仓库前缀；如用私有仓库可改成 registry.example.com/ns/zero2prod
-      DEST_REPO: docker.io/library/zero2prod
+      DEST_REPO: docker.io/library/zero2prod   # 可改为私有前缀，如 harbor.example.com/ns/zero2prod
       TAR_NAME: zero2prod-${DRONE_COMMIT_SHA}.tar
     commands:
       - |
@@ -175,9 +173,8 @@ steps:
           --tarPath=/drone/src/${TAR_NAME}
         test -f "/drone/src/${TAR_NAME}" || { echo "image tar missing"; exit 1; }
         ls -lah "/drone/src/${TAR_NAME}"
-        # 说明：即使 no-push，Kaniko 仍会校验 --destination 的合法性；必须提供完整“仓库名:标签”。
 
-  # 报告/镜像传到目标机 /tmp（避免 YAML 中 ~ 的解析问题）
+  # 报告/镜像先传到目标机 /tmp（避免 YAML 里 ~ 的解析歧义）
   - name: scp-coverage-to-tmp
     image: appleboy/drone-scp
     when:
@@ -225,7 +222,7 @@ steps:
       overwrite: true
       command_timeout: 3m
 
-  # 可选：如不再需要把源码同步到目标机，可删除此步
+  # 可选：若不需要把源码同步到目标机，可删除此步
   - name: scp-code
     image: appleboy/drone-scp
     when:
@@ -269,7 +266,7 @@ steps:
         from_secret: PROD_DB_PASSWORD
       PROD_DB_NAME:
         from_secret: PROD_DB_NAME
-      PROD_DB_REQUIRE_SSL: "false" # 未来启用 TLS 时改为 "true"
+      PROD_DB_REQUIRE_SSL: "false"  # 未来启用 TLS 时改为 "true"
     settings:
       host:
         from_secret: SSH_HOST
