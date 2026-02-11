@@ -1,98 +1,40 @@
 kind: pipeline
 type: docker
-name: z2p-axum-ci-cd
+name: z2p-axum-ci
 
-# =====================
-# 1️⃣ CI：构建 Rust 二进制 & Docker 镜像
-# =====================
-steps:
-  - name: cargo-build
-    image: rust:bookworm
-    commands:
-      - cargo test --all
-      - cargo build --release
-      - strip target/release/z2p-axum
-    cache:
-      key: cargo-cache
-      paths:
-        - /usr/local/cargo/registry
-        - /usr/local/cargo/git
-        - target
-
-  - name: docker-build
-    image: docker:27-cli
-    privileged: true
-    volumes:
-      - name: docker_sock
-        path: /var/run/docker.sock
-    commands:
-      - docker build -t zero2prod:latest .
-      - docker save zero2prod:latest > zero2prod.tar
-      - rm -f zero2prod_old.tar || true
-      - mv zero2prod.tar zero2prod_old.tar
-
-volumes:
-  - name: docker_sock
-    host:
-      path: /var/run/docker.sock
-
-# =====================
-# 2️⃣ CD：部署到生产服务器
-# =====================
----
-
-kind: pipeline
-type: docker
-name: z2p-axum-cd
-
-steps:
-  - name: deploy
-    image: appleboy/drone-ssh
-    privileged: true
+services:
+  - name: mysql
+    image: mysql:8.0
     environment:
-      PROD_DB_HOST:
-        from_secret: PROD_DB_HOST
-      PROD_DB_PORT:
-        from_secret: PROD_DB_PORT
-      PROD_DB_USER:
-        from_secret: PROD_DB_USER
-      PROD_DB_PASSWORD:
-        from_secret: PROD_DB_PASSWORD
-      PROD_DB_NAME:
-        from_secret: PROD_DB_NAME
-    settings:
-      host:
-        from_secret: SSH_HOST
-      port:
-        from_secret: SSH_PORT
-      username:
-        from_secret: SSH_USER
-      password:
-        from_secret: SSH_PASSWORD
-      script:
-        - set -euo pipefail
-        - APP_DIR="$HOME/zero2prod"
-        - mkdir -p "$APP_DIR"
-        - cd "$APP_DIR"
+      MYSQL_ROOT_PASSWORD: 1234
+      MYSQL_DATABASE: newsletter
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --port=13306
+    ports:
+      - 13306
 
-        # 上传最新镜像
-        - scp /drone/src/zero2prod_old.tar $SSH_USER@$SSH_HOST:$APP_DIR/zero2prod.tar
+steps:
+  - name: wait-for-mysql
+    image: mysql:8.0
+    commands:
+      - |
+        echo "Waiting for MySQL service at mysql:13306 ..."
+        for i in $(seq 1 60); do
+          mysql -h mysql -uroot -p1234 -P 13306 -e "SELECT 1" && exit 0
+          sleep 2
+        done
+        echo "MySQL not reachable on mysql:13306"
+        exit 1
 
-        # 服务器上加载并运行 Docker
-        - ssh $SSH_USER@$SSH_HOST " \
-            docker load < $APP_DIR/zero2prod.tar && \
-            docker stop zero2prod || true && \
-            docker rm zero2prod || true && \
-            docker run -d \
-              --name zero2prod \
-              -p 18000:8000 \
-              -e APP_ENVIRONMENT=production \
-              -e APP_DATABASE__HOST=$PROD_DB_HOST \
-              -e APP_DATABASE__PORT=$PROD_DB_PORT \
-              -e APP_DATABASE__USERNAME=$PROD_DB_USER \
-              -e APP_DATABASE__PASSWORD=$PROD_DB_PASSWORD \
-              -e APP_DATABASE__DATABASE_NAME=$PROD_DB_NAME \
-              -e APP_DATABASE__REQUIRE_SSL=false \
-              zero2prod:latest \
-              && docker image prune -f \
-          "
+  - name: test
+    image: rust:bookworm
+    environment:
+      APP_DATABASE__HOST: mysql
+      APP_DATABASE__PORT: "13306"
+      APP_DATABASE__USERNAME: root
+      APP_DATABASE__PASSWORD: 1234
+      APP_DATABASE__DATABASE_NAME: newsletter
+      APP_DATABASE__REQUIRE_SSL: "false"
+    commands:
+      - cargo test
