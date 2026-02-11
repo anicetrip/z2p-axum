@@ -134,17 +134,20 @@ steps:
   - name: build-image-tar
     image: gcr.io/kaniko-project/executor:debug
     environment:
-      IMAGE_NAME: zero2prod
+      # 显式给出“仓库/镜像名”前缀；如需私有仓库可换成 registry.example.com/ns/zero2prod
+      DEST_REPO: docker.io/library/zero2prod
       TAR_NAME: zero2prod-${DRONE_COMMIT_SHA}.tar
     commands:
       - |
+        set -e
         /kaniko/executor \
           --context=dir:///drone/src \
           --dockerfile=/drone/src/Dockerfile \
-          --destination=${IMAGE_NAME}:ci-${DRONE_COMMIT_SHA} \
+          --destination=${DEST_REPO}:ci-${DRONE_COMMIT_SHA} \
           --no-push \
           --tarPath=/drone/src/${TAR_NAME}
-        ls -lah /drone/src | grep "${TAR_NAME}" || { echo "image tar missing"; exit 1; }
+        test -f "/drone/src/${TAR_NAME}" || { echo "image tar missing"; exit 1; }
+        ls -lah "/drone/src/${TAR_NAME}"
 
   # -------- 报告/镜像传输到目标机 /tmp（避免 YAML 中 ~ 的解析问题） --------
   - name: scp-coverage-to-tmp
