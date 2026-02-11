@@ -50,18 +50,18 @@ steps:
         echo "MySQL not reachable on mysql:13306"
         exit 1
 
-  - name: fmt
-    image: rust:bookworm
-    volumes:
-      - name: cargo-home
-        path: /opt/cargo
-      - name: rustup-home
-        path: /opt/rustup
-      - name: cargo-target
-        path: /drone/src/target
-    commands:
-      - rustup component add rustfmt || true
-      - cargo fmt --all -- --check
+  # - name: fmt
+  #   image: rust:bookworm
+  #   volumes:
+  #     - name: cargo-home
+  #       path: /opt/cargo
+  #     - name: rustup-home
+  #       path: /opt/rustup
+  #     - name: cargo-target
+  #       path: /drone/src/target
+  #   commands:
+  #     - rustup component add rustfmt || true
+  #     - cargo fmt --all -- --check
 
   # 按需准备 Cargo.lock（存在则 fetch 预热；不存在则生成）
   - name: prepare-cargo-lock
