@@ -2,39 +2,54 @@ kind: pipeline
 type: docker
 name: z2p-axum-ci-cd
 
-services:
-  - name: mysql
-    image: mysql:8.0
-    environment:
-      MYSQL_ROOT_PASSWORD: 1234
-      MYSQL_DATABASE: newsletter
-    command:
-      - --default-authentication-plugin=mysql_native_password
-      - --port=13306
-    ports:
-      - 13306
+# =====================
+# 1️⃣ CI：构建 Rust 二进制 & Docker 镜像
+# =====================
+steps:
+  - name: cargo-build
+    image: rust:bookworm
+    commands:
+      - cargo fmt --all
+      - cargo test --all
+      - cargo build --release
+      - strip target/release/z2p-axum
+    cache:
+      key: cargo-cache
+      paths:
+        - /usr/local/cargo/registry
+        - /usr/local/cargo/git
+        - target
+
+  - name: docker-build
+    image: docker:27-cli
+    privileged: true
+    volumes:
+      - name: docker_sock
+        path: /var/run/docker.sock
+    commands:
+      - docker build -t zero2prod:latest .
+      - docker save zero2prod:latest > zero2prod.tar
+      - rm -f zero2prod_old.tar || true
+      - mv zero2prod.tar zero2prod_old.tar
+
+volumes:
+  - name: docker_sock
+    host:
+      path: /var/run/docker.sock
+
+# =====================
+# 2️⃣ CD：部署到生产服务器
+# =====================
+---
+
+kind: pipeline
+type: docker
+name: z2p-axum-cd
 
 steps:
-  # =====================
-  # 1️⃣ 等 MySQL 就绪（CI 用）
-  # =====================
-  - name: wait-for-mysql
-    image: mysql:8.0
-    commands:
-      - |
-        echo "Waiting for MySQL service at mysql:13306 ..."
-        for i in $(seq 1 60); do
-          mysql -h mysql -uroot -p1234 -P 13306 -e "SELECT 1" && exit 0
-          sleep 2
-        done
-        echo "MySQL not reachable on mysql:13306"
-        exit 1
-
-  # =====================
-  # 2️⃣ 部署（服务器上 build & run）
-  # =====================
   - name: deploy
     image: appleboy/drone-ssh
+    privileged: true
     environment:
       PROD_DB_HOST:
         from_secret: PROD_DB_HOST
@@ -56,72 +71,29 @@ steps:
       password:
         from_secret: SSH_PASSWORD
       script:
-        - |
-          set -euo pipefail
+        - set -euo pipefail
+        - APP_DIR="$HOME/zero2prod"
+        - mkdir -p "$APP_DIR"
+        - cd "$APP_DIR"
 
-          APP_DIR="$HOME/zero2prod"
-          REPO_URL="https://github.com/anicetrip/z2p-axum.git"
+        # 上传最新镜像
+        - scp /drone/src/zero2prod_old.tar $SSH_USER@$SSH_HOST:$APP_DIR/zero2prod.tar
 
-          echo "==> Prepare app directory"
-          if [ ! -d "$APP_DIR" ]; then
-            echo "Directory not found, cloning repository..."
-            git clone "$REPO_URL" "$APP_DIR"
-          elif [ ! -d "$APP_DIR/.git" ]; then
-            echo "Directory exists but is not a git repo, removing and cloning..."
-            rm -rf "$APP_DIR"
-            git clone "$REPO_URL" "$APP_DIR"
-          else
-            echo "Directory exists and is a git repo, pulling latest code..."
-            cd "$APP_DIR"
-            git reset --hard
-            git clean -fd
-            git pull
-          fi
-
-          cd "$APP_DIR"
-
-          # =====================
-          # 1️⃣ Build Rust release binary
-          # =====================
-          echo "==> Build Rust release binary"
-          export CARGO_HOME="$HOME/.cargo"  # 持久化 Cargo 缓存
-          mkdir -p "$CARGO_HOME"
-
-          cargo build --release
-          strip target/release/z2p-axum
-
-          # =====================
-          # 2️⃣ Build Docker image
-          # =====================
-          echo "==> Build minimal Docker image"
-          docker build -t zero2prod:latest .
-
-          # =====================
-          # 3️⃣ Cleanup old files & Docker
-          # =====================
-          echo "==> Cleanup old Docker and tar files"
-          docker stop zero2prod || true
-          docker rm zero2prod || true
-          docker image rm zero2prod:latest || true
-          find "$APP_DIR" -maxdepth 1 -name "zero2prod-*.tar" ! -name "zero2prod.tar" -delete
-
-          # =====================
-          # 4️⃣ Run container
-          # =====================
-          echo "==> Run container zero2prod"
-          docker run -d \
-            --name zero2prod \
-            -p 18000:8000 \
-            -e APP_ENVIRONMENT=production \
-            -e APP_DATABASE__HOST=$PROD_DB_HOST \
-            -e APP_DATABASE__PORT=$PROD_DB_PORT \
-            -e APP_DATABASE__USERNAME=$PROD_DB_USER \
-            -e APP_DATABASE__PASSWORD=$PROD_DB_PASSWORD \
-            -e APP_DATABASE__DATABASE_NAME=$PROD_DB_NAME \
-            -e APP_DATABASE__REQUIRE_SSL=false \
-            zero2prod:latest
-
-volumes:
-  - name: cargo_cache
-    host:
-      path: /www/drone/cargo_cache  # 持久化 Cargo 缓存
+        # 服务器上加载并运行 Docker
+        - ssh $SSH_USER@$SSH_HOST " \
+            docker load < $APP_DIR/zero2prod.tar && \
+            docker stop zero2prod || true && \
+            docker rm zero2prod || true && \
+            docker run -d \
+              --name zero2prod \
+              -p 18000:8000 \
+              -e APP_ENVIRONMENT=production \
+              -e APP_DATABASE__HOST=$PROD_DB_HOST \
+              -e APP_DATABASE__PORT=$PROD_DB_PORT \
+              -e APP_DATABASE__USERNAME=$PROD_DB_USER \
+              -e APP_DATABASE__PASSWORD=$PROD_DB_PASSWORD \
+              -e APP_DATABASE__DATABASE_NAME=$PROD_DB_NAME \
+              -e APP_DATABASE__REQUIRE_SSL=false \
+              zero2prod:latest \
+              && docker image prune -f \
+          "
