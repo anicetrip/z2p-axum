@@ -2,6 +2,11 @@ kind: pipeline
 type: docker
 name: z2p-axum-ci
 
+platform:
+  os: linux
+  arch: amd64
+
+# ======== 服务容器：MySQL（测试用） ========
 services:
   - name: mysql
     image: mysql:8.0
@@ -14,18 +19,44 @@ services:
     ports:
       - 13306
 
+# ======== Cargo 缓存（需要仓库 Trusted） ========
+volumes:
+  - name: cargo-registry
+    host:
+      path: /var/lib/drone/cargo/registry
+  - name: cargo-git
+    host:
+      path: /var/lib/drone/cargo/git
+  - name: cargo-target
+    host:
+      path: /var/lib/drone/cargo/target
+
+# ======== CI 步骤 ========
 steps:
   - name: wait-for-mysql
     image: mysql:8.0
     commands:
       - |
-        echo "Waiting for MySQL service at mysql:13306 ..."
-        for i in $(seq 1 60); do
+        echo "Waiting for MySQL at mysql:13306 ..."
+        for i in $(seq 1 120); do
           mysql -h mysql -uroot -p1234 -P 13306 -e "SELECT 1" && exit 0
           sleep 2
         done
         echo "MySQL not reachable on mysql:13306"
         exit 1
+
+  - name: fmt
+    image: rust:bookworm
+    volumes:
+      - name: cargo-registry
+        path: /usr/local/cargo/registry
+      - name: cargo-git
+        path: /usr/local/cargo/git
+      - name: cargo-target
+        path: /drone/src/target
+    commands:
+      - rustup component add rustfmt
+      - cargo fmt --all -- --check
 
   - name: test
     image: rust:bookworm
@@ -36,5 +67,208 @@ steps:
       APP_DATABASE__PASSWORD: 1234
       APP_DATABASE__DATABASE_NAME: newsletter
       APP_DATABASE__REQUIRE_SSL: "false"
+    volumes:
+      - name: cargo-registry
+        path: /usr/local/cargo/registry
+      - name: cargo-git
+        path: /usr/local/cargo/git
+      - name: cargo-target
+        path: /drone/src/target
     commands:
-      - cargo test
+      - cargo test --all --locked --workspace
+
+  - name: coverage
+    image: xd009642/tarpaulin:latest
+    pull: if-not-exists
+    privileged: true
+    environment:
+      APP_DATABASE__HOST: mysql
+      APP_DATABASE__PORT: "13306"
+      APP_DATABASE__USERNAME: root
+      APP_DATABASE__PASSWORD: 1234
+      APP_DATABASE__DATABASE_NAME: newsletter
+      APP_DATABASE__REQUIRE_SSL: "false"
+    volumes:
+      - name: cargo-registry
+        path: /usr/local/cargo/registry
+      - name: cargo-git
+        path: /usr/local/cargo/git
+      - name: cargo-target
+        path: /drone/src/target
+    commands:
+      - |
+        cargo tarpaulin --out Html --out Lcov || {
+          echo "tarpaulin failed"; exit 1;
+        }
+        test -f tarpaulin-report.html || { echo "report missing"; exit 1; }
+        echo "Coverage HTML: ./tarpaulin-report.html"
+
+  # ======== CI 内使用 Kaniko 构建镜像并导出为 tar（不推送） ========
+  - name: build-image-tar
+    image: gcr.io/kaniko-project/executor:debug
+    environment:
+      IMAGE_NAME: zero2prod
+      TAR_NAME: zero2prod-${DRONE_COMMIT_SHA}.tar
+    commands:
+      - |
+        # Kaniko 在容器内执行，不依赖 Docker 守护进程
+        # --no-push: 不推送镜像；--tarPath: 将镜像导出为 tar 包
+        /kaniko/executor \
+          --context=dir:///drone/src \
+          --dockerfile=/drone/src/Dockerfile \
+          --destination=${IMAGE_NAME}:ci-${DRONE_COMMIT_SHA} \
+          --no-push \
+          --tarPath=/drone/src/${TAR_NAME}
+        ls -lah /drone/src | grep "${TAR_NAME}" || { echo "image tar missing"; exit 1; }
+
+  # ======== 把覆盖率报告同步到目标机用户家目录（~） ========
+  - name: scp-coverage-to-user-home
+    image: appleboy/drone-scp
+    when:
+      branch:
+        - main
+      event:
+        - push
+        - tag
+    settings:
+      host:
+        from_secret: SSH_HOST
+      username:
+        from_secret: SSH_USER
+      password:
+        from_secret: SSH_PASSWORD
+      port:
+        from_secret: SSH_PORT
+      target: "~"
+      source:
+        - tarpaulin-report.html
+        - lcov.info
+      overwrite: true
+      command_timeout: 2m
+
+  # ======== 把镜像 tar 包同步到目标机用户家目录（~） ========
+  - name: scp-image-tar-to-user-home
+    image: appleboy/drone-scp
+    when:
+      branch:
+        - main
+      event:
+        - push
+        - tag
+    environment:
+      TAR_NAME: zero2prod-${DRONE_COMMIT_SHA}.tar
+    settings:
+      host:
+        from_secret: SSH_HOST
+      username:
+        from_secret: SSH_USER
+      password:
+        from_secret: SSH_PASSWORD
+      port:
+        from_secret: SSH_PORT
+      target: "~"
+      source:
+        - ${TAR_NAME}
+      overwrite: true
+      command_timeout: 3m
+
+  # （可选）如果仍需把源码/配置同步到目标机，保留；不需要可删除
+  - name: scp-code
+    image: appleboy/drone-scp
+    when:
+      branch:
+        - main
+      event:
+        - push
+        - tag
+    settings:
+      host:
+        from_secret: SSH_HOST
+      username:
+        from_secret: SSH_USER
+      password:
+        from_secret: SSH_PASSWORD
+      port:
+        from_secret: SSH_PORT
+      target: /opt/zero2prod/src
+      source:
+        - .
+      overwrite: true
+      command_timeout: 2m
+
+  # ======== CD：目标机仅本地 load & run；部署后清理非必要数据 ========
+  - name: deploy
+    image: appleboy/drone-ssh
+    when:
+      branch:
+        - main
+      event:
+        - push
+        - tag
+    environment:
+      PROD_DB_HOST:
+        from_secret: PROD_DB_HOST
+      PROD_DB_PORT:
+        from_secret: PROD_DB_PORT
+      PROD_DB_USER:
+        from_secret: PROD_DB_USER
+      PROD_DB_PASSWORD:
+        from_secret: PROD_DB_PASSWORD
+      PROD_DB_NAME:
+        from_secret: PROD_DB_NAME
+    settings:
+      host:
+        from_secret: SSH_HOST
+      username:
+        from_secret: SSH_USER
+      password:
+        from_secret: SSH_PASSWORD
+      port:
+        from_secret: SSH_PORT
+      command_timeout: 10m
+      script:
+        - set -euo pipefail
+        - TAR=~/zero2prod-${DRONE_COMMIT_SHA}.tar
+
+        # 1) 停/删旧容器
+        - |
+          if docker ps -a --format '{{.Names}}' | grep -q '^zero2prod$'; then
+            docker stop zero2prod || true
+            docker rm zero2prod || true
+          fi
+
+        # 2) 本地加载镜像 tar，并打上易用标签
+        - test -f "${TAR}" || { echo "image tar not found: ${TAR}"; exit 1; }
+        - docker load -i "${TAR}"
+        - IMAGE_ID=$(docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | awk '/zero2prod:ci-'"${DRONE_COMMIT_SHA}"'/{print $2}' | head -n1)
+        - test -n "${IMAGE_ID:-}" || { echo "loaded image not found"; exit 1; }
+        - docker tag "${IMAGE_ID}" zero2prod:latest
+        - docker tag "${IMAGE_ID}" zero2prod:${DRONE_COMMIT_SHA}
+
+        # 3) 运行新容器（生产启用 SSL）
+        - >
+          docker run -d --name zero2prod
+          --restart=always
+          -p 8000:8000
+          -e APP_ENVIRONMENT=production
+          -e APP_DATABASE__HOST=${PROD_DB_HOST}
+          -e APP_DATABASE__PORT=${PROD_DB_PORT}
+          -e APP_DATABASE__USERNAME=${PROD_DB_USER}
+          -e APP_DATABASE__PASSWORD=${PROD_DB_PASSWORD}
+          -e APP_DATABASE__DATABASE_NAME=${PROD_DB_NAME}
+          -e APP_DATABASE__REQUIRE_SSL=true
+          zero2prod:latest
+
+        # 4) 健康检查
+        - |
+          echo "Probing /health_check ..."
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health_check >/dev/null; then
+              echo "✅ health OK"; ok=1; break; fi; sleep 2; done
+          if [ "${ok:-0}" != "1" ]; then
+            echo "❌ health check failed"; docker logs zero2prod; exit 1; fi
+
+        # 5) 清理非必要数据：镜像/容器垃圾 + 临时 tar
+        - docker image prune -f || true
+        - docker container prune -f || true
+        - rm -f "${TAR}" || true
