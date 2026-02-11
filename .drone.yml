@@ -1,4 +1,191 @@
-- name: deploy
+kind: pipeline
+type: docker
+name: z2p-axum-ci
+
+platform:
+  os: linux
+  arch: amd64
+
+services:
+  - name: mysql
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: 1234
+      MYSQL_DATABASE: newsletter
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --port=13306
+    ports:
+      - 13306
+
+volumes:
+  - name: cargo-registry
+    host:
+      path: /var/lib/drone/cargo/registry
+  - name: cargo-git
+    host:
+      path: /var/lib/drone/cargo/git
+  - name: cargo-target
+    host:
+      path: /var/lib/drone/cargo/target
+
+steps:
+  - name: wait-for-mysql
+    image: mysql:8.0
+    commands:
+      - |
+        echo "Waiting for MySQL at mysql:13306 ..."
+        for i in $(seq 1 120); do
+          mysql -h mysql -uroot -p1234 -P 13306 -e "SELECT 1" && exit 0
+          sleep 2
+        done
+        echo "MySQL not reachable on mysql:13306"
+        exit 1
+
+  - name: fmt
+    image: rust:bookworm
+    volumes:
+      - name: cargo-registry
+        path: /usr/local/cargo/registry
+      - name: cargo-git
+        path: /usr/local/cargo/git
+      - name: cargo-target
+        path: /drone/src/target
+    commands:
+      - rustup component add rustfmt
+      - cargo fmt --all -- --check
+
+  - name: test
+    image: rust:bookworm
+    environment:
+      APP_DATABASE__HOST: mysql
+      APP_DATABASE__PORT: "13306"
+      APP_DATABASE__USERNAME: root
+      APP_DATABASE__PASSWORD: 1234
+      APP_DATABASE__DATABASE_NAME: newsletter
+      APP_DATABASE__REQUIRE_SSL: "false"
+    volumes:
+      - name: cargo-registry
+        path: /usr/local/cargo/registry
+      - name: cargo-git
+        path: /usr/local/cargo/git
+      - name: cargo-target
+        path: /drone/src/target
+    commands:
+      - cargo test --all --locked --workspace
+
+  - name: coverage
+    image: xd009642/tarpaulin:latest
+    pull: if-not-exists
+    privileged: true
+    environment:
+      APP_DATABASE__HOST: mysql
+      APP_DATABASE__PORT: "13306"
+      APP_DATABASE__USERNAME: root
+      APP_DATABASE__PASSWORD: 1234
+      APP_DATABASE__DATABASE_NAME: newsletter
+      APP_DATABASE__REQUIRE_SSL: "false"
+    volumes:
+      - name: cargo-registry
+        path: /usr/local/cargo/registry
+      - name: cargo-git
+        path: /usr/local/cargo/git
+      - name: cargo-target
+        path: /drone/src/target
+    commands:
+      - |
+        cargo tarpaulin --out Html --out Lcov
+        test -f tarpaulin-report.html || { echo "report missing"; exit 1; }
+        echo "Coverage HTML: ./tarpaulin-report.html"
+
+  - name: build-image-tar
+    image: gcr.io/kaniko-project/executor:debug
+    environment:
+      IMAGE_NAME: zero2prod
+      TAR_NAME: zero2prod-${DRONE_COMMIT_SHA}.tar
+    commands:
+      - |
+        /kaniko/executor \
+          --context=dir:///drone/src \
+          --dockerfile=/drone/src/Dockerfile \
+          --destination=${IMAGE_NAME}:ci-${DRONE_COMMIT_SHA} \
+          --no-push \
+          --tarPath=/drone/src/${TAR_NAME}
+        ls -lah /drone/src | grep "${TAR_NAME}" || { echo "image tar missing"; exit 1; }
+
+  - name: scp-coverage-to-tmp
+    image: appleboy/drone-scp
+    when:
+      branch:
+        - main
+      event:
+        - push
+        - tag
+    settings:
+      host:
+        from_secret: SSH_HOST
+      username:
+        from_secret: SSH_USER
+      password:
+        from_secret: SSH_PASSWORD
+      port:
+        from_secret: SSH_PORT
+      target: /tmp
+      source:
+        - tarpaulin-report.html
+        - lcov.info
+      overwrite: true
+      command_timeout: 2m
+
+  - name: scp-image-tar-to-tmp
+    image: appleboy/drone-scp
+    when:
+      branch:
+        - main
+      event:
+        - push
+        - tag
+    environment:
+      TAR_NAME: zero2prod-${DRONE_COMMIT_SHA}.tar
+    settings:
+      host:
+        from_secret: SSH_HOST
+      username:
+        from_secret: SSH_USER
+      password:
+        from_secret: SSH_PASSWORD
+      port:
+        from_secret: SSH_PORT
+      target: /tmp
+      source:
+        - ${TAR_NAME}
+      overwrite: true
+      command_timeout: 3m
+
+  - name: scp-code
+    image: appleboy/drone-scp
+    when:
+      branch:
+        - main
+      event:
+        - push
+        - tag
+    settings:
+      host:
+        from_secret: SSH_HOST
+      username:
+        from_secret: SSH_USER
+      password:
+        from_secret: SSH_PASSWORD
+      port:
+        from_secret: SSH_PORT
+      target: /opt/zero2prod/src
+      source:
+        - .
+      overwrite: true
+      command_timeout: 2m
+
+  - name: deploy
     image: appleboy/drone-ssh
     when:
       branch:
@@ -17,7 +204,7 @@
         from_secret: PROD_DB_PASSWORD
       PROD_DB_NAME:
         from_secret: PROD_DB_NAME
-      # 生产未开 TLS，默认 false；未来启用 TLS 时把这个变量改为 "true" 即可
+      # 生产默认不启用 SSL；后续启用 TLS 时把值改为 "true"
       PROD_DB_REQUIRE_SSL: "false"
     settings:
       host:
