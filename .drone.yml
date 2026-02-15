@@ -3,14 +3,18 @@ type: docker
 name: z2p-axum-ci-secrets-check
 
 steps:
-  - name: check-all-secrets
+  - name: check-secrets
     image: alpine:3.18
+    environment:
+      DOCKER_REGISTRY:
+        from_secret: DOCKER_REGISTRY
+      DOCKER_USERNAME:
+        from_secret: DOCKER_USERNAME
+      DOCKER_PASSWORD:
+        from_secret: DOCKER_PASSWORD
     commands:
       - set -e
-      - echo "🔹 Checking Drone environment variables..."
-      # 检查 DOCKER_REGISTRY
+      - echo "🔹 Checking Drone Secrets..."
       - if [ -z "${DOCKER_REGISTRY:-}" ]; then echo "DOCKER_REGISTRY missing"; else echo "DOCKER_REGISTRY is set: ${DOCKER_REGISTRY}"; fi
-      # 检查 DOCKER_USERNAME
       - if [ -z "${DOCKER_USERNAME:-}" ]; then echo "DOCKER_USERNAME missing"; else echo "DOCKER_USERNAME is set: ${DOCKER_USERNAME}"; fi
-      # 检查 DOCKER_PASSWORD（只显示长度，不显示内容）
       - if [ -z "${DOCKER_PASSWORD:-}" ]; then echo "DOCKER_PASSWORD missing"; else echo "DOCKER_PASSWORD is set, length=${#DOCKER_PASSWORD}"; fi
