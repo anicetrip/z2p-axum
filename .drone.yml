@@ -3,7 +3,7 @@ type: docker
 name: z2p-axum-ci-check
 
 steps:
-  - name: check-env
+  - name: check-secrets-and-docker
     image: docker:24-dind
     privileged: true
     environment:
@@ -14,17 +14,17 @@ steps:
       DOCKER_PASSWORD:
         from_secret: DOCKER_PASSWORD
     commands:
+      - set -e
+      - echo "🔹 Checking Drone Secrets..."
+      - echo "DOCKER_REGISTRY=${DOCKER_REGISTRY}"
+      - echo "DOCKER_USERNAME=${DOCKER_USERNAME}"
+      - if [ -n "${DOCKER_PASSWORD}" ]; then echo "DOCKER_PASSWORD is set"; else echo "DOCKER_PASSWORD missing"; fi
+
+      - echo "🔹 Testing Docker login..."
       - |
-        set -e
-        echo "🔹 Checking Drone Secrets..."
-        echo "DOCKER_REGISTRY: ${DOCKER_REGISTRY}"
-        echo "DOCKER_USERNAME: ${DOCKER_USERNAME}"
-        [ -n "${DOCKER_PASSWORD}" ] && echo "DOCKER_PASSWORD: set" || echo "DOCKER_PASSWORD: missing"
+        echo "${DOCKER_PASSWORD}" | docker login "${DOCKER_REGISTRY}" -u "${DOCKER_USERNAME}" --password-stdin
 
-        echo "🔹 Testing Docker login..."
-        echo "${DOCKER_PASSWORD}" | docker login ${DOCKER_REGISTRY} -u "${DOCKER_USERNAME}" --password-stdin
+      - echo "🔹 Docker login successful, checking info..."
+      - docker --config /root/.docker info
 
-        echo "🔹 Listing repositories (requires login, won't fail if empty)..."
-        docker --config /root/.docker info || echo "Docker info done"
-
-        echo "✅ Environment and Docker connection OK"
+      - echo "✅ Secrets and Docker login test passed"
