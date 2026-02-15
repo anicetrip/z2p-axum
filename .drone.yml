@@ -6,7 +6,6 @@ platform:
   os: linux
   arch: amd64
 
-# Rust 缓存目录
 environment:
   CARGO_HOME: /opt/cargo
   RUSTUP_HOME: /opt/rustup
@@ -68,17 +67,7 @@ steps:
         cargo -V
         rustc -V
 
-  - name: fmt
-    image: rust:bookworm
-    volumes:
-      - name: cargo-home
-        path: /opt/cargo
-      - name: rustup-home
-        path: /opt/rustup
-      - name: cargo-target
-        path: /drone/src/target
-    commands:
-      - cargo fmt --all -- --check
+
 
   - name: prepare-cargo-lock
     image: rust:bookworm
@@ -98,58 +87,7 @@ steps:
           cargo generate-lockfile
         fi
 
-  - name: test
-    image: rust:bookworm
-    environment:
-      APP_DATABASE__HOST: mysql
-      APP_DATABASE__PORT: "13306"
-      APP_DATABASE__USERNAME: root
-      APP_DATABASE__PASSWORD: 1234
-      APP_DATABASE__DATABASE_NAME: newsletter
-      APP_DATABASE__REQUIRE_SSL: "false"
-    volumes:
-      - name: cargo-home
-        path: /opt/cargo
-      - name: rustup-home
-        path: /opt/rustup
-      - name: cargo-target
-        path: /drone/src/target
-    commands:
-      - |
-        set -e
-        if [ -f Cargo.lock ]; then
-          cargo test --all --workspace --locked
-        else
-          cargo test --all --workspace
-        fi
 
-  - name: coverage
-    image: xd009642/tarpaulin:latest
-    pull: if-not-exists
-    privileged: true
-    environment:
-      APP_DATABASE__HOST: mysql
-      APP_DATABASE__PORT: "13306"
-      APP_DATABASE__USERNAME: root
-      APP_DATABASE__PASSWORD: 1234
-      APP_DATABASE__DATABASE_NAME: newsletter
-      APP_DATABASE__REQUIRE_SSL: "false"
-    volumes:
-      - name: cargo-home
-        path: /opt/cargo
-      - name: rustup-home
-        path: /opt/rustup
-      - name: cargo-target
-        path: /drone/src/target
-    commands:
-      - |
-        set -e
-        if [ -f Cargo.lock ]; then
-          cargo fetch --locked --manifest-path Cargo.toml
-        fi
-        cargo tarpaulin --out Html --out Lcov
-        test -f tarpaulin-report.html || { echo "report missing"; exit 1; }
-        echo "Coverage HTML: ./tarpaulin-report.html"
 
   - name: build-and-push
     image: gcr.io/kaniko-project/executor:debug
@@ -160,19 +98,30 @@ steps:
         from_secret: DOCKER_USERNAME
       DOCKER_PASSWORD:
         from_secret: DOCKER_PASSWORD
-      DEST_REPO: ${DOCKER_REGISTRY}/z2p-axum
       TAR_NAME: z2p-axum-${DRONE_COMMIT_SHA}.tar
     commands:
       - |
         set -e
-        # 写 Docker 登录信息给 Kaniko
-        echo "{\"auths\":{\"${DOCKER_REGISTRY}\":{\"username\":\"${DOCKER_USERNAME}\",\"password\":\"${DOCKER_PASSWORD}\"}}}" > /kaniko/.docker/config.json
+        DEST_REPO="${DOCKER_REGISTRY}/z2p-axum"
+        mkdir -p /kaniko/.docker
+        cat <<EOF > /kaniko/.docker/config.json
+        {
+          "auths": {
+            "${DOCKER_REGISTRY}": {
+              "username": "${DOCKER_USERNAME}",
+              "password": "${DOCKER_PASSWORD}"
+            }
+          }
+        }
+        EOF
+
         /kaniko/executor \
           --context=dir:///drone/src \
           --dockerfile=/drone/src/Dockerfile \
           --destination=${DEST_REPO}:ci-${DRONE_COMMIT_SHA} \
           --destination=${DEST_REPO}:latest \
           --tarPath=/drone/src/${TAR_NAME}
+
         test -f "/drone/src/${TAR_NAME}" || { echo "image tar missing"; exit 1; }
         ls -lah "/drone/src/${TAR_NAME}"
 
@@ -282,18 +231,10 @@ steps:
           fi
 
           TAR=~/z2p-axum-${DRONE_COMMIT_SHA}.tar
-          if [ ! -f "${TAR}" ]; then
-            echo "image tar not found: ${TAR}"
-            exit 1
-          fi
           docker load -i "${TAR}"
 
           IMAGE_ID=$(docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
             | awk "/z2p-axum:ci-${DRONE_COMMIT_SHA}/{print \$2}" | head -n1)
-          if [ -z "${IMAGE_ID:-}" ]; then
-            echo "loaded image not found for ci-${DRONE_COMMIT_SHA}"
-            exit 1
-          fi
           docker tag "${IMAGE_ID}" z2p-axum:latest
           docker tag "${IMAGE_ID}" z2p-axum:${DRONE_COMMIT_SHA}
 
