@@ -6,7 +6,7 @@ platform:
   os: linux
   arch: amd64
 
-# 统一环境：让所有步骤共享相同的 Cargo/Rustup/target 路径以命中缓存
+# Rust 缓存目录
 environment:
   CARGO_HOME: /opt/cargo
   RUSTUP_HOME: /opt/rustup
@@ -24,7 +24,6 @@ services:
     ports:
       - 13306
 
-# 宿主机缓存卷（持久化 CARGO_HOME、RUSTUP_HOME、target）
 volumes:
   - name: cargo-home
     host:
@@ -49,7 +48,6 @@ steps:
         echo "MySQL not reachable on mysql:13306"
         exit 1
 
-  # 初始化 Rust 工具链（Nightly + minimal profile）并缓存到宿主卷
   - name: init-rustup
     image: rust:bookworm
     volumes:
@@ -82,7 +80,6 @@ steps:
     commands:
       - cargo fmt --all -- --check
 
-  # 按需准备锁文件（存在则 fetch 预热；不存在则生成）
   - name: prepare-cargo-lock
     image: rust:bookworm
     volumes:
@@ -96,10 +93,8 @@ steps:
       - |
         set -e
         if [ -f Cargo.lock ]; then
-          echo "Cargo.lock exists. Warming cache with --locked fetch..."
           cargo fetch --locked --manifest-path Cargo.toml
         else
-          echo "Cargo.lock not found. Generating lockfile..."
           cargo generate-lockfile
         fi
 
@@ -156,25 +151,31 @@ steps:
         test -f tarpaulin-report.html || { echo "report missing"; exit 1; }
         echo "Coverage HTML: ./tarpaulin-report.html"
 
-  # CI 内：Kaniko 离线导出镜像（不会推送，但 --destination 必须是合法的仓库名:标签）
-  - name: build-image-tar
+  - name: build-and-push
     image: gcr.io/kaniko-project/executor:debug
     environment:
-      DEST_REPO: docker.io/library/zero2prod   # 可改为私有前缀，如 harbor.example.com/ns/zero2prod
-      TAR_NAME: zero2prod-${DRONE_COMMIT_SHA}.tar
+      DOCKER_REGISTRY:
+        from_secret: DOCKER_REGISTRY
+      DOCKER_USERNAME:
+        from_secret: DOCKER_USERNAME
+      DOCKER_PASSWORD:
+        from_secret: DOCKER_PASSWORD
+      DEST_REPO: ${DOCKER_REGISTRY}/z2p-axum
+      TAR_NAME: z2p-axum-${DRONE_COMMIT_SHA}.tar
     commands:
       - |
         set -e
+        # 写 Docker 登录信息给 Kaniko
+        echo "{\"auths\":{\"${DOCKER_REGISTRY}\":{\"username\":\"${DOCKER_USERNAME}\",\"password\":\"${DOCKER_PASSWORD}\"}}}" > /kaniko/.docker/config.json
         /kaniko/executor \
           --context=dir:///drone/src \
           --dockerfile=/drone/src/Dockerfile \
           --destination=${DEST_REPO}:ci-${DRONE_COMMIT_SHA} \
-          --no-push \
+          --destination=${DEST_REPO}:latest \
           --tarPath=/drone/src/${TAR_NAME}
         test -f "/drone/src/${TAR_NAME}" || { echo "image tar missing"; exit 1; }
         ls -lah "/drone/src/${TAR_NAME}"
 
-  # 报告/镜像先传到目标机 /tmp（避免 YAML 里 ~ 的解析歧义）
   - name: scp-coverage-to-tmp
     image: appleboy/drone-scp
     when:
@@ -218,35 +219,10 @@ steps:
         from_secret: SSH_PORT
       target: /tmp
       source:
-        - zero2prod-*.tar
+        - z2p-axum-*.tar
       overwrite: true
       command_timeout: 3m
 
-  # 可选：若不需要把源码同步到目标机，可删除此步
-  - name: scp-code
-    image: appleboy/drone-scp
-    when:
-      branch:
-        - main
-      event:
-        - push
-        - tag
-    settings:
-      host:
-        from_secret: SSH_HOST
-      username:
-        from_secret: SSH_USER
-      password:
-        from_secret: SSH_PASSWORD
-      port:
-        from_secret: SSH_PORT
-      target: /opt/zero2prod/src
-      source:
-        - .
-      overwrite: true
-      command_timeout: 2m
-
-  # CD：将 /tmp 工件移动到 ~，本地 load & run，健康检查与清理
   - name: deploy
     image: appleboy/drone-ssh
     when:
@@ -266,7 +242,9 @@ steps:
         from_secret: PROD_DB_PASSWORD
       PROD_DB_NAME:
         from_secret: PROD_DB_NAME
-      PROD_DB_REQUIRE_SSL: "false"  # 未来启用 TLS 时改为 "true"
+      PROD_DB_REQUIRE_SSL: "false"
+      DOCKER_REGISTRY:
+        from_secret: DOCKER_REGISTRY
     settings:
       host:
         from_secret: SSH_HOST
@@ -276,7 +254,6 @@ steps:
         from_secret: SSH_PASSWORD
       port:
         from_secret: SSH_PORT
-      # 把变量注入到“远端”执行环境（非常关键）
       envs:
         - DRONE_COMMIT_SHA
         - PROD_DB_HOST
@@ -285,28 +262,26 @@ steps:
         - PROD_DB_PASSWORD
         - PROD_DB_NAME
         - PROD_DB_REQUIRE_SSL
+        - DOCKER_REGISTRY
       command_timeout: 12m
       script:
         - |
           set -euo pipefail
 
-          TAR_TMP=/tmp/zero2prod-${DRONE_COMMIT_SHA}.tar
+          TAR_TMP=/tmp/z2p-axum-${DRONE_COMMIT_SHA}.tar
           COV_HTML_TMP=/tmp/tarpaulin-report.html
           COV_LCOV_TMP=/tmp/lcov.info
 
-          # 0) 把 /tmp 的工件移动到用户家目录（~）
           [ -f "$COV_HTML_TMP" ] && mv -f "$COV_HTML_TMP" ~/
           [ -f "$COV_LCOV_TMP" ] && mv -f "$COV_LCOV_TMP"  ~/
           [ -f "$TAR_TMP" ]      && mv -f "$TAR_TMP"       ~/
 
-          # 1) 停/删旧容器
-          if docker ps -a --format '{{.Names}}' | grep -q '^zero2prod$'; then
-            docker stop zero2prod || true
-            docker rm   zero2prod || true
+          if docker ps -a --format '{{.Names}}' | grep -q '^z2p-axum$'; then
+            docker stop z2p-axum || true
+            docker rm   z2p-axum || true
           fi
 
-          # 2) 本地加载镜像 tar，并打上易用标签
-          TAR=~/zero2prod-${DRONE_COMMIT_SHA}.tar
+          TAR=~/z2p-axum-${DRONE_COMMIT_SHA}.tar
           if [ ! -f "${TAR}" ]; then
             echo "image tar not found: ${TAR}"
             exit 1
@@ -314,16 +289,15 @@ steps:
           docker load -i "${TAR}"
 
           IMAGE_ID=$(docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
-            | awk "/zero2prod:ci-${DRONE_COMMIT_SHA}/{print \$2}" | head -n1)
+            | awk "/z2p-axum:ci-${DRONE_COMMIT_SHA}/{print \$2}" | head -n1)
           if [ -z "${IMAGE_ID:-}" ]; then
             echo "loaded image not found for ci-${DRONE_COMMIT_SHA}"
             exit 1
           fi
-          docker tag "${IMAGE_ID}" zero2prod:latest
-          docker tag "${IMAGE_ID}" zero2prod:${DRONE_COMMIT_SHA}
+          docker tag "${IMAGE_ID}" z2p-axum:latest
+          docker tag "${IMAGE_ID}" z2p-axum:${DRONE_COMMIT_SHA}
 
-          # 3) 运行新容器（默认不强制 SSL）
-          docker run -d --name zero2prod \
+          docker run -d --name z2p-axum \
             --restart=always \
             -p 8000:8000 \
             -e APP_ENVIRONMENT=production \
@@ -333,9 +307,8 @@ steps:
             -e APP_DATABASE__PASSWORD=${PROD_DB_PASSWORD} \
             -e APP_DATABASE__DATABASE_NAME=${PROD_DB_NAME} \
             -e APP_DATABASE__REQUIRE_SSL=${PROD_DB_REQUIRE_SSL} \
-            zero2prod:latest
+            z2p-axum:latest
 
-          # 4) 健康检查
           echo "Probing /health_check ..."
           ok=0
           for i in $(seq 1 60); do
@@ -346,11 +319,10 @@ steps:
           done
           if [ "${ok}" != "1" ]; then
             echo "❌ health check failed"
-            docker logs zero2prod
+            docker logs z2p-axum
             exit 1
           fi
 
-          # 5) 清理非必要数据：镜像/容器垃圾 + 临时 tar
           docker image prune -f || true
           docker container prune -f || true
           rm -f "${TAR}" || true
