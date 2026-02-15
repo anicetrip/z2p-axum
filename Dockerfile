@@ -1,30 +1,37 @@
-kind: pipeline
-type: docker
-name: z2p-axum-ci-check
+# =====================
+# Builder
+# =====================
+FROM rust:bookworm AS builder
+WORKDIR /app
 
-steps:
-  - name: check-env
-    image: docker:24-dind
-    privileged: true
-    environment:
-      DOCKER_REGISTRY:
-        from_secret: DOCKER_REGISTRY
-      DOCKER_USERNAME:
-        from_secret: DOCKER_USERNAME
-      DOCKER_PASSWORD:
-        from_secret: DOCKER_PASSWORD
-    commands:
-      - |
-        set -e
-        echo "🔹 Checking Drone Secrets..."
-        echo "DOCKER_REGISTRY: ${DOCKER_REGISTRY}"
-        echo "DOCKER_USERNAME: ${DOCKER_USERNAME}"
-        [ -n "${DOCKER_PASSWORD}" ] && echo "DOCKER_PASSWORD: set" || echo "DOCKER_PASSWORD: missing"
+RUN apt-get update && apt-get install -y \
+    clang \
+    lld \
+    binutils \
+ && rm -rf /var/lib/apt/lists/*
 
-        echo "🔹 Testing Docker login..."
-        echo "${DOCKER_PASSWORD}" | docker login ${DOCKER_REGISTRY} -u "${DOCKER_USERNAME}" --password-stdin
+COPY . .
 
-        echo "🔹 Listing repositories (requires login, won't fail if empty)..."
-        docker --config /root/.docker info || echo "Docker info done"
+# SeaORM 不需要 SQLX_OFFLINE
+RUN cargo build --release
 
-        echo "✅ Environment and Docker connection OK"
+# 如果你的 binary 名字是 z2p-axum
+RUN strip target/release/z2p-axum
+
+
+# =====================
+# Runtime
+# =====================
+FROM debian:bookworm-slim
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/z2p-axum /app/z2p-axum
+COPY configuration /app/configuration
+
+ENV APP_ENVIRONMENT=production
+
+ENTRYPOINT ["/app/z2p-axum"]
