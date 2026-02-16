@@ -1,18 +1,26 @@
-PROD_DB_HOST
+# 创建本地数据目录
+mkdir -p ~/docker-data/postgres-18
 
-PROD_DB_NAME
+# 运行容器并挂载本地目录
+docker run -d \
+  --name postgres-18 \
+  -e POSTGRES_USER=root \
+  -e POSTGRES_PASSWORD=1234 \
+  -e POSTGRES_DB=newsletter \
+  -p 5432:5432 \
+  -v ~/docker-data/postgres-18:/var/lib/postgresql/data \
+  postgres:18
 
-PROD_DB_PASSWORD
 
-PROD_DB_PORT
 
-PROD_DB_USER
+  # 创建目录
+mkdir C:\docker-data\mysql -Force
 
-SSH_HOST
-
-SSH_PASSWORD
-
-SSH_PORT
-
-SSH_USER
-
+# 运行容器
+docker run -d `
+  --name mysql-latest `
+  -e MYSQL_ROOT_PASSWORD=1234 `
+  -e MYSQL_DATABASE=newsletter `
+  -p 3306:3306 `
+  -v C:\docker-data\mysql:/var/lib/mysql `
+  mysql:latest

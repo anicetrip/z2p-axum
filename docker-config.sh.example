@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# 这是配置示例文件，复制为 docker-config.sh 并修改真实值
+
+# 私有仓库地址
+export PRIVATE_REGISTRY="registry.example.com"
+
+# 用户名
+export PRIVATE_REGISTRY_USER="admin"
+
+# 密码（确保使用双引号，如果密码包含特殊字符）
+export PRIVATE_REGISTRY_PASSWORD="your-secure-password"

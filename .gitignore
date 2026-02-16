@@ -5,3 +5,5 @@ Cargo.lock
 .idea/z2p-axum.iml
 .idea/vcs.xml
 migration/target
+docker-config.sh
+tarpaulin-report.html
