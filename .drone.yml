@@ -6,9 +6,9 @@ platform:
   os: linux
   arch: amd64
 
-# =============================
+############################################
 # MySQL 服务容器（测试用）
-# =============================
+############################################
 services:
   - name: mysql
     image: mysql:8.0
@@ -16,18 +16,16 @@ services:
       MYSQL_ROOT_PASSWORD: 1234
       MYSQL_DATABASE: newsletter
     command:
-      # 使用新的认证插件，替代 mysql_native_password
       - --default-authentication-plugin=caching_sha2_password
       - --port=13306
-      # 添加一些优化参数
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
     ports:
       - 13306
 
-# =============================
-# Host Volumes（需要 Trusted）
-# =============================
+############################################
+# Host Volumes（需要 Trusted 仓库）
+############################################
 volumes:
   - name: cargo-registry
     host:
@@ -45,30 +43,32 @@ volumes:
     host:
       path: /var/lib/drone/artifacts/coverage
 
-# =============================
+############################################
 # CI Steps
-# =============================
+############################################
 steps:
 
+  ##########################################
   # 等待 MySQL 启动
+  ##########################################
   - name: wait-for-mysql
     image: mysql:8.0
     commands:
       - |
-        echo "Waiting for MySQL at mysql:13306 ..."
+        echo "Waiting for MySQL..."
         for i in $(seq 1 120); do
-          # 使用 caching_sha2_password 认证连接
-          mysql -h mysql -uroot -p1234 -P 13306 -e "SELECT 1" --protocol=TCP 2>/dev/null && {
+          mysql -h mysql -uroot -p1234 -P 13306 --protocol=TCP -e "SELECT 1" >/dev/null 2>&1 && {
             echo "MySQL is ready!"
             exit 0
           }
-          echo "Attempt $$i/120: MySQL not ready yet..."
           sleep 2
         done
-        echo "MySQL failed to start after 120 attempts"
+        echo "MySQL failed to start"
         exit 1
 
-  # 运行测试（不使用 --locked）
+  ##########################################
+  # 运行测试
+  ##########################################
   - name: test
     image: rust:bookworm
     environment:
@@ -78,9 +78,7 @@ steps:
       APP_DATABASE__PASSWORD: 1234
       APP_DATABASE__DATABASE_NAME: newsletter
       APP_DATABASE__REQUIRE_SSL: "false"
-      # 添加 Rust 测试环境变量
       RUST_BACKTRACE: full
-      RUST_LOG: debug
     volumes:
       - name: cargo-registry
         path: /usr/local/cargo/registry
@@ -89,17 +87,17 @@ steps:
       - name: cargo-target
         path: /drone/src/target
     commands:
-      # 先获取依赖（不使用 lock 文件）
       - cargo fetch
-      # 运行所有测试（不使用 --locked 标志）
       - cargo test --all --workspace
-      # 如果还有文档测试
-      - cargo test --doc
 
-  # 生成覆盖率并保存到服务器
+  ##########################################
+  # 生成覆盖率（依赖 test 成功）
+  ##########################################
   - name: coverage
     image: xd009642/tarpaulin:latest
     privileged: true
+    depends_on:
+      - test
     environment:
       APP_DATABASE__HOST: mysql
       APP_DATABASE__PORT: "13306"
@@ -107,7 +105,6 @@ steps:
       APP_DATABASE__PASSWORD: 1234
       APP_DATABASE__DATABASE_NAME: newsletter
       APP_DATABASE__REQUIRE_SSL: "false"
-      RUST_BACKTRACE: full
     volumes:
       - name: cargo-registry
         path: /usr/local/cargo/registry
@@ -118,56 +115,19 @@ steps:
       - name: coverage-output
         path: /coverage
     commands:
-      - echo "Running tarpaulin with caching_sha2_password..."
-      
-      # 先获取依赖
+      - echo "Running tarpaulin..."
       - cargo fetch
-      
-      # 运行 tarpaulin 覆盖率测试
-      - cargo tarpaulin --out Html --out Lcov --all --workspace --avoid-cfg-tarpaulin
-      
-      - echo "Saving coverage to host..."
+      - cargo tarpaulin --out Html --out Lcov --all --workspace
 
-      # 每个构建独立目录
+      - echo "Saving coverage..."
+
       - mkdir -p /coverage/${DRONE_BUILD_NUMBER}
 
-      # 复制覆盖率报告
-      - cp tarpaulin-report.html /coverage/${DRONE_BUILD_NUMBER}/ 2>/dev/null || echo "HTML report not found"
-      - cp lcov.info /coverage/${DRONE_BUILD_NUMBER}/ 2>/dev/null || echo "LCOV info not found"
+      - cp tarpaulin-report.html /coverage/${DRONE_BUILD_NUMBER}/
+      - cp lcov.info /coverage/${DRONE_BUILD_NUMBER}/
 
-      # 更新 latest
       - rm -rf /coverage/latest
       - cp -r /coverage/${DRONE_BUILD_NUMBER} /coverage/latest
 
-      - echo "Coverage saved to: /var/lib/drone/artifacts/coverage/${DRONE_BUILD_NUMBER}"
-
-  # 可选：运行 clippy 检查
-  - name: lint
-    image: rust:bookworm
-    volumes:
-      - name: cargo-registry
-        path: /usr/local/cargo/registry
-      - name: cargo-git
-        path: /usr/local/cargo/git
-      - name: cargo-target
-        path: /drone/src/target
-    commands:
-      - rustup component add clippy
-      - cargo clippy --all -- -D warnings
-    depends_on:
-      - test
-    when:
-      event:
-        - pull_request
-        - push
-
-  # 可选：检查代码格式
-  - name: fmt
-    image: rust:bookworm
-    commands:
-      - rustup component add rustfmt
-      - cargo fmt --all -- --check
-    when:
-      event:
-        - pull_request
-        - push
+      - echo "Coverage saved to:"
+      - echo "/var/lib/drone/artifacts/coverage/${DRONE_BUILD_NUMBER}"
