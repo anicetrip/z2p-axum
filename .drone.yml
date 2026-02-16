@@ -1,3 +1,7 @@
+kind: pipeline
+type: docker
+name: z2p-axum-ci
+
 platform:
   os: linux
   arch: amd64
