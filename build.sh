@@ -25,17 +25,17 @@ fi
 # # =====================
 # # Docker 登录函数
 # # =====================
-# docker_login() {
-#     if [ -n "$PRIVATE_REGISTRY" ] && [ -n "$PRIVATE_REGISTRY_USER" ] && [ -n "$PRIVATE_REGISTRY_PASSWORD" ]; then
-#         echo "🔹 Logging into $PRIVATE_REGISTRY..."
-#         echo "$PRIVATE_REGISTRY_PASSWORD" | docker login "$PRIVATE_REGISTRY" \
-#             --username "$PRIVATE_REGISTRY_USER" \
-#             --password-stdin
-#         return $?
-#     else
-#         echo "⚠️ Registry credentials not fully provided"
-#         return 1
-#     fi
+docker_login() {
+    if [ -n "$PRIVATE_REGISTRY" ] && [ -n "$PRIVATE_REGISTRY_USER" ] && [ -n "$PRIVATE_REGISTRY_PASSWORD" ]; then
+        echo "🔹 Logging into $PRIVATE_REGISTRY..."
+        echo "$PRIVATE_REGISTRY_PASSWORD" | docker login "$PRIVATE_REGISTRY" \
+            --username "$PRIVATE_REGISTRY_USER" \
+            --password-stdin
+        return $?
+    else
+        echo "⚠️ Registry credentials not fully provided"
+        return 1
+    fi
 }
 
 # # =====================
@@ -81,39 +81,39 @@ docker run -d \
     $IMAGE_NAME
 
 
-# # =====================
-# # 7️⃣ 推送镜像到私有仓库（如果有配置）
-# # =====================
-# if [ -n "$PRIVATE_REGISTRY" ]; then
-#     echo "🔹 Preparing to push to private registry: $PRIVATE_REGISTRY"
+# =====================
+# 7️⃣ 推送镜像到私有仓库（如果有配置）
+# =====================
+if [ -n "$PRIVATE_REGISTRY" ]; then
+    echo "🔹 Preparing to push to private registry: $PRIVATE_REGISTRY"
     
-#     # 登录到私有仓库
-#     if docker_login; then
-#         # 标记镜像
-#         PRIVATE_IMAGE_NAME="$PRIVATE_REGISTRY/zero2prod:latest"
-#         echo "🔹 Tagging image as: $PRIVATE_IMAGE_NAME"
-#         docker tag $IMAGE_NAME $PRIVATE_IMAGE_NAME
+    # 登录到私有仓库
+    if docker_login; then
+        # 标记镜像
+        PRIVATE_IMAGE_NAME="$PRIVATE_REGISTRY/zero2prod:latest"
+        echo "🔹 Tagging image as: $PRIVATE_IMAGE_NAME"
+        docker tag $IMAGE_NAME $PRIVATE_IMAGE_NAME
         
-#         # 推送镜像
-#         echo "🔹 Pushing image to private registry..."
-#         docker push $PRIVATE_IMAGE_NAME
+        # 推送镜像
+        echo "🔹 Pushing image to private registry..."
+        docker push $PRIVATE_IMAGE_NAME
         
-#         # 登出（可选）
-#         docker logout "$PRIVATE_REGISTRY"
+        # 登出（可选）
+        docker logout "$PRIVATE_REGISTRY"
         
-#         echo "✅ Image successfully pushed to $PRIVATE_IMAGE_NAME"
-#     else
-#         echo "❌ Failed to login to $PRIVATE_REGISTRY, skipping push"
-#     fi
-# else
-#     echo "🔹 No private registry configured, skipping push"
-# fi
+        echo "✅ Image successfully pushed to $PRIVATE_IMAGE_NAME"
+    else
+        echo "❌ Failed to login to $PRIVATE_REGISTRY, skipping push"
+    fi
+else
+    echo "🔹 No private registry configured, skipping push"
+fi
 
-# # =====================
-# # 8️⃣ 清理
-# # =====================
-# echo "🔹 Stopping and removing container..."
-# docker stop $CONTAINER_NAME
-# docker rm $CONTAINER_NAME
+# =====================
+# 8️⃣ 清理
+# =====================
+echo "🔹 Stopping and removing container..."
+docker stop $CONTAINER_NAME
+docker rm $CONTAINER_NAME
 
 echo "✅ All done!"

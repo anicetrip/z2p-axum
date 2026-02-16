@@ -67,37 +67,11 @@ steps:
         exit 1
 
   ##########################################
-  # 运行测试
-  ##########################################
-  - name: test
-    image: rust:bookworm
-    environment:
-      APP_DATABASE__HOST: mysql
-      APP_DATABASE__PORT: "13306"
-      APP_DATABASE__USERNAME: root
-      APP_DATABASE__PASSWORD: 1234
-      APP_DATABASE__DATABASE_NAME: newsletter
-      APP_DATABASE__REQUIRE_SSL: "false"
-      RUST_BACKTRACE: full
-    volumes:
-      - name: cargo-registry
-        path: /usr/local/cargo/registry
-      - name: cargo-git
-        path: /usr/local/cargo/git
-      - name: cargo-target
-        path: /drone/src/target
-    commands:
-      - cargo fetch
-      - cargo test --all --workspace
-
-  ##########################################
   # 生成覆盖率（依赖 test 成功）
   ##########################################
   - name: coverage
     image: xd009642/tarpaulin:latest
     privileged: true
-    depends_on:
-      - test
     environment:
       APP_DATABASE__HOST: mysql
       APP_DATABASE__PORT: "13306"
