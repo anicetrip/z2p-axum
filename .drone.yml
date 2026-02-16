@@ -72,6 +72,8 @@ steps:
   - name: coverage
     image: xd009642/tarpaulin:latest
     privileged: true
+    depends_on:
+      - wait-for-mysql
     environment:
       APP_DATABASE__HOST: mysql
       APP_DATABASE__PORT: "13306"
@@ -96,12 +98,20 @@ steps:
       - echo "Saving coverage..."
 
       - mkdir -p /coverage/${DRONE_BUILD_NUMBER}
-
       - cp tarpaulin-report.html /coverage/${DRONE_BUILD_NUMBER}/
       - cp lcov.info /coverage/${DRONE_BUILD_NUMBER}/
 
       - rm -rf /coverage/latest
       - cp -r /coverage/${DRONE_BUILD_NUMBER} /coverage/latest
+
+      - echo "Cleaning old coverage builds (keep latest 2)..."
+
+      - |
+        cd /coverage
+        ls -1d [0-9]* 2>/dev/null | sort -nr | tail -n +3 | while read dir; do
+          echo "Removing old build: $dir"
+          rm -rf "$dir"
+        done
 
       - echo "Coverage saved to:"
       - echo "/var/lib/drone/artifacts/coverage/${DRONE_BUILD_NUMBER}"
