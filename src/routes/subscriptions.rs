@@ -1,9 +1,8 @@
-use axum::{
-    Form,
-    extract::State,
-    http::StatusCode,
-    response::{IntoResponse, Response},
+use crate::{
+    domain::{NewSubscriber, SubscriberEmail, SubscriberName},
+    entity::subscription,
 };
+use axum::{Form, extract::State, http::StatusCode};
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ActiveValue, DatabaseConnection};
 use serde::Deserialize;
@@ -26,33 +25,41 @@ pub struct FormData {
 pub async fn subscribe(
     State(db): State<DatabaseConnection>,
     Form(form): Form<FormData>,
-) -> Response {
-    match insert_subscriber(&db, &form).await {
-        Ok(_) => StatusCode::OK.into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
+) -> Result<StatusCode, StatusCode> {
+    let new_subscriber = form.try_into().map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    insert_subscriber(&db, new_subscriber)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(StatusCode::OK)
 }
 
-#[tracing::instrument(name = "Saving new subscriber details in the database", skip(form, db))]
+#[tracing::instrument(
+    name = "Saving new subscriber details in the database",
+    skip(new_subscriber, db)
+)]
 pub async fn insert_subscriber(
     db: &DatabaseConnection,
-    form: &FormData,
+    new_subscriber: NewSubscriber,
 ) -> Result<(), sea_orm::DbErr> {
-    use crate::entity::subscription;
-
-    // 创建 ActiveModel - id 不设置，让数据库自增生成
     let subscription = subscription::ActiveModel {
-        email: ActiveValue::Set(form.email.clone()),
-        name: ActiveValue::Set(form.name.clone()),
+        email: ActiveValue::Set(new_subscriber.email.as_ref().to_string()),
+        name: ActiveValue::Set(new_subscriber.name.as_ref().to_string()),
         subscribed_at: ActiveValue::Set(Utc::now()),
-        ..Default::default() // id 会使用默认值（数据库自增）
+        ..Default::default()
     };
 
-    // 现在可以用 insert() 了，因为 id 是自增的
-    subscription.insert(db).await.map_err(|e| {
-        tracing::error!("Failed to execute query: {:?}", e);
-        e
-    })?;
+    subscription.insert(db).await?;
 
     Ok(())
+}
+
+impl TryFrom<FormData> for NewSubscriber {
+    type Error = String;
+    fn try_from(value: FormData) -> Result<Self, Self::Error> {
+        let name = SubscriberName::parse(value.name)?;
+        let email = SubscriberEmail::parse(value.email)?;
+        Ok(Self { email, name })
+    }
 }
