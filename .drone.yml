@@ -93,7 +93,7 @@ steps:
     commands:
       - echo "Running tarpaulin..."
       - cargo fetch
-      - cargo tarpaulin --out Html --out Lcov --all --workspace
+      - cargo tarpaulin --skip-clean --target-dir /drone/src/target --out Html --out Lcov --all --workspace
 
       - echo "Saving coverage..."
 

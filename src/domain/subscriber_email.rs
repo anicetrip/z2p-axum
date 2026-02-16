@@ -28,7 +28,6 @@ mod tests {
     use proptest::prelude::*;
     use proptest::prelude::{Strategy, any};
 
-
     #[test]
     fn empty_string_is_rejected() {
         let email = "".to_string();
