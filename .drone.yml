@@ -93,7 +93,6 @@ steps:
         path: /coverage
     commands:
       - echo "Running tarpaulin..."
-      - cargo build --workspace --all-targets --target-dir /drone/src/target
       - cargo fetch
       - cargo tarpaulin --skip-clean --target-dir /drone/src/target --out Html --out Lcov --all --workspace
 
