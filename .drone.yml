@@ -1,7 +1,3 @@
-kind: pipeline
-type: docker
-name: z2p-axum-ci
-
 platform:
   os: linux
   arch: amd64
@@ -92,6 +88,9 @@ steps:
       - name: coverage-output
         path: /coverage
     commands:
+      - echo "Cleaning stale cargo locks..."
+      - find /drone/src/target -name ".package-lock" -delete || true
+      - find /usr/local/cargo/registry -name ".package-lock" -delete || true
       - echo "Running tarpaulin..."
       - cargo fetch
       - cargo tarpaulin --skip-clean --target-dir /drone/src/target --out Html --out Lcov --all --workspace
