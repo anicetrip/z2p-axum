@@ -7,3 +7,4 @@ Cargo.lock
 migration/target
 docker-config.sh
 tarpaulin-report.html
+configuration/base.yaml
