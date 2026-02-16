@@ -6,7 +6,9 @@ platform:
   os: linux
   arch: amd64
 
-# ======== 服务容器：MySQL（测试用） ========
+# =============================
+# MySQL 服务容器（测试用）
+# =============================
 services:
   - name: mysql
     image: mysql:8.0
@@ -19,20 +21,32 @@ services:
     ports:
       - 13306
 
-# ======== Cargo 缓存（需要仓库 Trusted） ========
+# =============================
+# Host Volumes（需要 Trusted）
+# =============================
 volumes:
   - name: cargo-registry
     host:
       path: /var/lib/drone/cargo/registry
+
   - name: cargo-git
     host:
       path: /var/lib/drone/cargo/git
+
   - name: cargo-target
     host:
       path: /var/lib/drone/cargo/target
 
-# ======== CI 步骤 ========
+  - name: coverage-output
+    host:
+      path: /var/lib/drone/artifacts/coverage
+
+# =============================
+# CI Steps
+# =============================
 steps:
+
+  # 等待 MySQL 启动
   - name: wait-for-mysql
     image: mysql:8.0
     commands:
@@ -42,10 +56,10 @@ steps:
           mysql -h mysql -uroot -p1234 -P 13306 -e "SELECT 1" && exit 0
           sleep 2
         done
-        echo "MySQL not reachable on mysql:13306"
+        echo "MySQL not reachable"
         exit 1
 
-
+  # 运行测试
   - name: test
     image: rust:bookworm
     environment:
@@ -65,9 +79,9 @@ steps:
     commands:
       - cargo test --all --locked --workspace
 
+  # 生成覆盖率并保存到服务器
   - name: coverage
     image: xd009642/tarpaulin:latest
-    pull: if-not-exists
     privileged: true
     environment:
       APP_DATABASE__HOST: mysql
@@ -83,38 +97,23 @@ steps:
         path: /usr/local/cargo/git
       - name: cargo-target
         path: /drone/src/target
+      - name: coverage-output
+        path: /coverage
     commands:
-      - |
-        cargo tarpaulin --out Html --out Lcov || {
-          echo "tarpaulin failed"; exit 1;
-        }
-        test -f tarpaulin-report.html || { echo "report missing"; exit 1; }
-        echo "Coverage HTML: ./tarpaulin-report.html"
+      - echo "Running tarpaulin..."
+      - cargo tarpaulin --out Html --out Lcov
 
+      - echo "Saving coverage to host..."
 
-  # ======== 把覆盖率报告同步到目标机用户家目录（~） ========
-  - name: scp-coverage-to-user-home
-    image: appleboy/drone-scp
-    when:
-      branch:
-        - main
-      event:
-        - push
-        - tag
-    settings:
-      host:
-        from_secret: SSH_HOST
-      username:
-        from_secret: SSH_USER
-      password:
-        from_secret: SSH_PASSWORD
-      port:
-        from_secret: SSH_PORT
-      target: "~"
-      source:
-        - tarpaulin-report.html
-        - lcov.info
-      overwrite: true
-      command_timeout: 2m
+      # 每个构建独立目录
+      - mkdir -p /coverage/${DRONE_BUILD_NUMBER}
 
+      - cp tarpaulin-report.html /coverage/${DRONE_BUILD_NUMBER}/
+      - cp lcov.info /coverage/${DRONE_BUILD_NUMBER}/
 
+      # 更新 latest
+      - rm -rf /coverage/latest
+      - cp -r /coverage/${DRONE_BUILD_NUMBER} /coverage/latest
+
+      - echo "Coverage saved:"
+      - echo "/var/lib/drone/artifacts/coverage/${DRONE_BUILD_NUMBER}"
