@@ -69,49 +69,53 @@ steps:
   ##########################################
   # 生成覆盖率（依赖 test 成功）
   ##########################################
-  - name: coverage
-    image: xd009642/tarpaulin:latest
-    privileged: true
-    depends_on:
-      - wait-for-mysql
-    environment:
-      APP_DATABASE__HOST: mysql
-      APP_DATABASE__PORT: "13306"
-      APP_DATABASE__USERNAME: root
-      APP_DATABASE__PASSWORD: 1234
-      APP_DATABASE__DATABASE_NAME: newsletter
-      APP_DATABASE__REQUIRE_SSL: "false"
-    volumes:
-      - name: cargo-registry
-        path: /usr/local/cargo/registry
-      - name: cargo-git
-        path: /usr/local/cargo/git
-      - name: cargo-target
-        path: /drone/src/target
-      - name: coverage-output
-        path: /coverage
-    commands:
-      - echo "Running tarpaulin..."
-      - cargo fetch
-      - cargo tarpaulin --skip-clean --target-dir /drone/src/target --out Html --out Lcov --all --workspace
+- name: coverage
+  image: xd009642/tarpaulin:latest
+  privileged: true
+  depends_on:
+    - wait-for-mysql
+  environment:
+    APP_DATABASE__HOST: mysql
+    APP_DATABASE__PORT: "13306"
+    APP_DATABASE__USERNAME: root
+    APP_DATABASE__PASSWORD: 1234
+    APP_DATABASE__DATABASE_NAME: newsletter
+    APP_DATABASE__REQUIRE_SSL: "false"
+    # 固定 RUSTFLAGS 与开发构建保持一致
+    RUSTFLAGS: "-C instrument-coverage"
+  volumes:
+    - name: cargo-registry
+      path: /usr/local/cargo/registry
+    - name: cargo-git
+      path: /usr/local/cargo/git
+    - name: cargo-target
+      path: /drone/src/target
+    - name: coverage-output
+      path: /coverage
+  commands:
+    - echo "Running tarpaulin..."
+    # 先 build 一次，保证 target 目录已有 artifact
+    - cargo build --workspace --all-targets --target-dir /drone/src/target
+    # 再运行 tarpaulin 复用 build 结果
+    - cargo tarpaulin --skip-clean --target-dir /drone/src/target --out Html --out Lcov --all --workspace
+    
+    - echo "Saving coverage..."
 
-      - echo "Saving coverage..."
+    - mkdir -p /coverage/${DRONE_BUILD_NUMBER}
+    - cp tarpaulin-report.html /coverage/${DRONE_BUILD_NUMBER}/
+    - cp lcov.info /coverage/${DRONE_BUILD_NUMBER}/
 
-      - mkdir -p /coverage/${DRONE_BUILD_NUMBER}
-      - cp tarpaulin-report.html /coverage/${DRONE_BUILD_NUMBER}/
-      - cp lcov.info /coverage/${DRONE_BUILD_NUMBER}/
+    - rm -rf /coverage/latest
+    - cp -r /coverage/${DRONE_BUILD_NUMBER} /coverage/latest
 
-      - rm -rf /coverage/latest
-      - cp -r /coverage/${DRONE_BUILD_NUMBER} /coverage/latest
+    - echo "Cleaning old coverage builds (keep latest 2)..."
 
-      - echo "Cleaning old coverage builds (keep latest 2)..."
+    - |
+      cd /coverage
+      ls -1d [0-9]* 2>/dev/null | sort -nr | tail -n +3 | while read dir; do
+        echo "Removing old build: $dir"
+        rm -rf "$dir"
+      done
 
-      - |
-        cd /coverage
-        ls -1d [0-9]* 2>/dev/null | sort -nr | tail -n +3 | while read dir; do
-          echo "Removing old build: $dir"
-          rm -rf "$dir"
-        done
-
-      - echo "Coverage saved to:"
-      - echo "/var/lib/drone/artifacts/coverage/${DRONE_BUILD_NUMBER}"
+    - echo "Coverage saved to:"
+    - echo "/var/lib/drone/artifacts/coverage/${DRONE_BUILD_NUMBER}"
