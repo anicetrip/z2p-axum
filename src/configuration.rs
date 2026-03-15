@@ -9,6 +9,7 @@ use tracing_log::log::LevelFilter;
 pub struct Settings {
     pub database: DatabaseSettings,
     pub application: ApplicationSettings,
+    pub email_client: EmailClientSttings,
 }
 
 #[derive(Deserialize)]
@@ -26,6 +27,14 @@ pub struct DatabaseSettings {
     pub host: String,
     pub database_name: String,
     pub require_ssl: bool,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct EmailClientSttings {
+    #[serde(deserialize_with = "deserialize_number_from_string")]
+    pub port: u16,
+    pub host: String,
+    pub base_url: String,
 }
 
 pub fn get_configuration() -> Result<Settings, config::ConfigError> {
