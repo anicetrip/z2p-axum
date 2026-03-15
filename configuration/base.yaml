@@ -9,7 +9,6 @@ database:
     password: "1234"
     database_name: "newsletter"
     require_ssl: false
-    host: "localhost"
 
 email_client:
     port: 3000
