@@ -9,6 +9,7 @@ use tower_http::trace::TraceLayer;
 use tracing::info_span;
 use uuid::Uuid;
 
+use crate::configuration::DatabaseSettings;
 use crate::{
     configuration::Settings,
     routes::{health_check, subscribe},
@@ -41,18 +42,22 @@ fn build_router(connection: DatabaseConnection) -> Router {
         )
 }
 
+pub async fn get_connection_pool(configuration: &DatabaseSettings) -> DatabaseConnection {
+    Database::connect(configuration.with_db())
+        .await
+        .expect("Failed to connect to database.")
+}
+
 pub struct Application {
     port: u16,
-    server: Serve<tokio::net::TcpListener, Router, Router>,
+    server: Serve<TcpListener, Router, Router>,
 }
 
 impl Application {
     pub async fn build(configuration: Settings) -> Result<Self, std::io::Error> {
         // 3️⃣ 建立数据库连接池
         // ⚠️ SeaORM 只有 async connect（没有 lazy）
-        let db = Database::connect(configuration.database.with_db())
-            .await
-            .expect("Failed to connect to database.");
+        let db = get_connection_pool(&configuration.database).await;
 
         // 4️⃣ 绑定地址（不再硬编码）
         let address = format!(

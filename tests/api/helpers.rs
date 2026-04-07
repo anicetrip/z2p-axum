@@ -1,17 +1,18 @@
 use migration::Migrator;
 use sea_orm::{Database, DatabaseConnection, DbBackend, Statement};
-use tokio::net::TcpListener;
-use z2p_axum::configuration::DatabaseSettings;
-use wiremock::MockServer;
 use sea_orm_migration::MigratorTrait;
-use z2p_axum::{configuration::get_configuration, startup::run};
+use wiremock::MockServer;
+use z2p_axum::configuration::DatabaseSettings;
+use z2p_axum::configuration::get_configuration;
 
 use sea_orm::ConnectionTrait;
 use uuid::Uuid;
+use z2p_axum::startup::{Application, get_connection_pool};
 
 pub struct TestApp {
     pub address: String,
     pub email_server: MockServer,
+    pub db_pool: DatabaseConnection,
     pub port: u16,
 }
 
@@ -21,28 +22,29 @@ pub struct ConfirmationLinks {
 }
 
 pub async fn spawn_app() -> TestApp {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("Failed to bind random port");
-    let port = listener.local_addr().unwrap().port();
-    let address = format!("http://127.0.0.1:{}", port);
+    dotenvy::dotenv().ok();
     let email_server = MockServer::start().await;
-    let mut configuration = get_configuration().expect("Failed to read configuration.");
 
-    // 为每个测试生成唯一数据库名
-    configuration.database.database_name = Uuid::new_v4().to_string();
+    let configuration = {
+        let mut c = get_configuration().expect("Failed to read configuration.");
+        c.database.database_name = Uuid::new_v4().to_string();
+        c.application.port = 0;
+        c.email_client.base_url = email_server.uri();
+        c
+    };
+    configure_database(&configuration.database).await;
+    let application = Application::build(configuration.clone())
+        .await
+        .expect("Failed to build application.");
+    let application_port = application.port();
+    let address = format!("http://127.0.0.1:{}", application.port());
+    let _ = tokio::spawn(application.run_until_stopped());
 
-    let db = configure_database(&configuration.database).await;
-
-    let server = run(listener, db.clone());
-
-    tokio::spawn(async move {
-        server.await.expect("Failed to run server");
-    });
     TestApp {
         address,
+        db_pool: get_connection_pool(&configuration.database).await,
         email_server,
-        port
+        port: application_port,
     }
 }
 
