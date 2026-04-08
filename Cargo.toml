@@ -18,9 +18,9 @@ migration = { path = "./migration" }
 [dependencies]
 axum = "0.8.8"
 reqwest = "0.13.2"
-tokio = { version = "1.49.0", features = ["full"] }
+tokio = { version = "1.51.0", features = ["full"] }
 serde = { version = "1.0.228", features = ["derive"] }
-sea-orm = { version = "1.1.19", features = [
+sea-orm = { version = "1.1.20", features = [
     "sqlx-mysql",           # MySQL 驱动
     "runtime-tokio-native-tls",  # 改用 native-tls，兼容性更好
     "macros",               # 实体宏
@@ -28,14 +28,14 @@ sea-orm = { version = "1.1.19", features = [
     "with-uuid",            # 启用 UUID 支持
     "debug-print",          # 调试输出（可选）
 ] }
-chrono = { version = "0.4.43", features = ["serde"] }
-uuid = { version = "1.20.0", features = ["v4", "serde"] }
+chrono = { version = "0.4.44", features = ["serde"] }
+uuid = { version = "1.23.0", features = ["v4", "serde"] }
 
-config = "0.15.19"
+config = "0.15.22"
 
 tracing = "0.1.44"
 dotenvy = "0.15.7"  # 用于加载 .env 文件
-sea-orm-migration = "1.1.19"
+sea-orm-migration = "1.1.20"
 
 tower = "0.5.3"
 tower-http = { version = "0.6.8", features = ["trace"] }
@@ -44,14 +44,14 @@ secrecy = { version = "0.10.3", features = ["serde"] }
 
 tracing-bunyan-formatter = "0.3.10"
 tracing-log= "0.2"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 
 serde-aux = "4.7.0"
 claims = "0.8"
 validator = "0.20.0"
-fake = "4.4.0"
-unicode-segmentation = "1.12.0"
-proptest = "1.0"
+fake = "5.1.0"
+unicode-segmentation = "1.13.2"
+proptest = "1.11"
 linkify = "0.10.0"
 serde_json = "1.0.149"
 wiremock = "0.6.5"
