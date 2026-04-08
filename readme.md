@@ -24,3 +24,16 @@ docker run -d `
   -p 3306:3306 `
   -v C:\docker-data\mysql:/var/lib/mysql `
   mysql:latest
+
+## 更新数据库
+```angular2html
+cd migration
+cargo run -- generate add_status_to_subscriptions
+# Then change the script.
+cargo run -- up
+
+# status
+cargo run -- status
+# roll back
+cargo run -- down
+```

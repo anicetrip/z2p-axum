@@ -2,5 +2,4 @@
 
 pub mod prelude;
 
-pub mod subscription;
-pub use subscription::*;
+pub mod subscriptions;

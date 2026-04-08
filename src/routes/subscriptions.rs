@@ -1,6 +1,6 @@
 use crate::{
     domain::{NewSubscriber, SubscriberEmail, SubscriberName},
-    entity::subscription,
+    entity::subscriptions,
 };
 use axum::{Form, extract::State, http::StatusCode};
 use chrono::Utc;
@@ -43,7 +43,7 @@ pub async fn insert_subscriber(
     db: &DatabaseConnection,
     new_subscriber: NewSubscriber,
 ) -> Result<(), sea_orm::DbErr> {
-    let subscription = subscription::ActiveModel {
+    let subscription = subscriptions::ActiveModel {
         email: ActiveValue::Set(new_subscriber.email.as_ref().to_string()),
         name: ActiveValue::Set(new_subscriber.name.as_ref().to_string()),
         subscribed_at: ActiveValue::Set(Utc::now()),

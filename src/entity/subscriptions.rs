@@ -7,6 +7,7 @@ pub struct Model {
     pub id: i32,
     pub email: String,
     pub name: String,
+    pub status: String,
     pub subscribed_at: DateTimeUtc,
 }
 
