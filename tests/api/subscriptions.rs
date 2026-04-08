@@ -45,7 +45,6 @@ async fn subscribe_persists_the_new_subscriber() {
 async fn subscribe_returns_a_422_when_data_is_missing() {
     // Arrange
     let app = spawn_app().await;
-    let client = reqwest::Client::new();
     let test_cases = vec![
         ("name=le%20guin", "missing the email"),
         ("email=ursula_le_guin%40gmail.com", "missing the name"),
