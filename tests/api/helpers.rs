@@ -1,11 +1,9 @@
-use migration::Migrator;
-use sea_orm::{Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
+use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
 use wiremock::MockServer;
 use z2p_axum::configuration::DatabaseSettings;
 use z2p_axum::configuration::get_configuration;
 
-use sea_orm::ConnectionTrait;
+use migration::{Migrator, MigratorTrait};
 use uuid::Uuid;
 use z2p_axum::startup::{Application, get_connection_pool};
 
@@ -29,7 +27,7 @@ pub async fn spawn_app() -> TestApp {
         let mut c = get_configuration().expect("Failed to read configuration.");
         c.database.database_name = Uuid::new_v4().to_string();
         c.application.port = 0;
-        c.email_client.base_url = email_server.uri();
+        c.email_client.base_url = email_server.uri().parse().unwrap();
         c
     };
     configure_database(&configuration.database).await;
@@ -49,28 +47,20 @@ pub async fn spawn_app() -> TestApp {
 }
 
 async fn configure_database(config: &DatabaseSettings) -> DatabaseConnection {
-    // 1️⃣ 连接到 MySQL 实例（不指定数据库）
     let admin_conn = Database::connect(config.without_db())
         .await
         .expect("Failed to connect to MySQL without database");
 
-    // 2️⃣ 创建测试数据库
-    let create_db_stmt = Statement::from_string(
-        DbBackend::MySql,
-        format!(r#"CREATE DATABASE `{}`"#, config.database_name),
-    );
-
+    // 👇 关键：用 execute_unprepared（DDL必须）
     admin_conn
-        .execute(create_db_stmt)
+        .execute_unprepared(&format!(r#"CREATE DATABASE `{}`"#, config.database_name))
         .await
         .expect("Failed to create test database");
 
-    // 3️⃣ 连接到新数据库
     let db_conn = Database::connect(config.with_db())
         .await
         .expect("Failed to connect to test database");
 
-    // 4️⃣ 运行迁移
     Migrator::up(&db_conn, None)
         .await
         .expect("Failed to run migrations");

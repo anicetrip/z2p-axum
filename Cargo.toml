@@ -4,15 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "z2p_axum" 
+name = "z2p_axum"
 path = "src/lib.rs"
 
 [[bin]]
 path = "src/main.rs"
 name = "z2p-axum"
 
-[dev-dependencies]
-migration = { path = "./migration" }
+
 
 [workspace]
 members = [
@@ -20,19 +19,31 @@ members = [
     "migration"
 ]
 
+
+[workspace.dependencies]
+sea-orm = { version = "2.0.0-rc.38", default-features = false, features = [
+    "sqlx-mysql",
+    "runtime-tokio-native-tls",
+    "macros",
+    "with-chrono",
+    "with-uuid",
+    "debug-print",
+] }
+
+sea-orm-migration = { version = "2.0.0-rc.38", default-features = false, features = [
+    "sqlx-mysql",
+] }
+
+sqlx = { version = "0.8.5", default-features = false, features = [
+    "mysql",
+    "runtime-tokio-native-tls"
+] }
 [dependencies]
 axum = "0.8.8"
-reqwest = "0.13.2"
+reqwest = { version = "0.13.2", features = ["json"] }
 tokio = { version = "1.51.0", features = ["full"] }
 serde = { version = "1.0.228", features = ["derive"] }
-sea-orm = { version = "1.1.20", features = [
-    "sqlx-mysql",           # MySQL 驱动
-    "runtime-tokio-native-tls",  # 改用 native-tls，兼容性更好
-    "macros",               # 实体宏
-    "with-chrono",          # 启用 Chrono 支持（用于 DateTime）
-    "with-uuid",            # 启用 UUID 支持
-    "debug-print",          # 调试输出（可选）
-] }
+sea-orm = { workspace = true }
 chrono = { version = "0.4.44", features = ["serde"] }
 uuid = { version = "1.23.0", features = ["v4", "serde"] }
 
@@ -40,15 +51,15 @@ config = "0.15.22"
 
 tracing = "0.1.44"
 dotenvy = "0.15.7"  # 用于加载 .env 文件
-sea-orm-migration = "1.1.20"
 
 
+url = { version = "2.5.8", features = ["serde"] }
 tower-http = { version = "0.6.8", features = ["trace"] }
 
 secrecy = { version = "0.10.3", features = ["serde"] }
 
 tracing-bunyan-formatter = "0.3.10"
-tracing-log= "0.2"
+tracing-log = "0.2"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 
 serde-aux = "4.7.0"
@@ -59,4 +70,6 @@ unicode-segmentation = "1.13.2"
 proptest = "1.11"
 linkify = "0.10.0"
 serde_json = "1.0.149"
-wiremock = "0.6.5"
+wiremock = { version = "0.6.5", default-features = false }
+
+migration = { path = "migration" }

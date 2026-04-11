@@ -10,24 +10,42 @@ use tracing::info_span;
 use uuid::Uuid;
 
 use crate::configuration::DatabaseSettings;
+use crate::email_client::EmailClient;
+use crate::routes::confirm;
 use crate::{
     configuration::Settings,
     routes::{health_check, subscribe},
 };
 
+#[derive(Clone)]
+pub struct AppState {
+    pub db: DatabaseConnection,
+    pub email_client: EmailClient,
+    pub base_url: String,
+}
+
 pub fn run(
     listener: TcpListener,
     connection: DatabaseConnection,
+    email_client: EmailClient,
+    base_url: String,
 ) -> Serve<TcpListener, Router, Router> {
-    let router = build_router(connection);
+    let state = AppState {
+        db: connection,
+        email_client,
+        base_url,
+    };
+
+    let router = build_router(state);
     axum::serve(listener, router)
 }
 
-fn build_router(connection: DatabaseConnection) -> Router {
+fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health_check", get(health_check))
         .route("/subscriptions", post(subscribe))
-        .with_state(connection)
+        .route("/subscriptions/confirm", get(confirm))
+        .with_state(state)
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &axum::http::Request<_>| {
                 let request_id: String = Uuid::new_v4().to_string();
@@ -55,18 +73,30 @@ pub struct Application {
 
 impl Application {
     pub async fn build(configuration: Settings) -> Result<Self, std::io::Error> {
-        // 3️⃣ 建立数据库连接池
-        // ⚠️ SeaORM 只有 async connect（没有 lazy）
-        let db = get_connection_pool(&configuration.database).await;
-
-        // 4️⃣ 绑定地址（不再硬编码）
+        let connection_pool = get_connection_pool(&configuration.database).await;
+        let sender_email = configuration
+            .email_client
+            .sender()
+            .expect("Invalid sender email address.");
+        let timeout = configuration.email_client.timeout();
+        let email_client = EmailClient::new(
+            configuration.email_client.base_url,
+            sender_email,
+            configuration.email_client.authorization_token,
+            timeout,
+        );
         let address = format!(
             "{}:{}",
             configuration.application.host, configuration.application.port
         );
         let listener = TcpListener::bind(address).await?;
         let port = listener.local_addr()?.port();
-        let server = run(listener, db);
+        let server = run(
+            listener,
+            connection_pool,
+            email_client,
+            configuration.application.base_url,
+        );
 
         Ok(Self { port, server })
     }

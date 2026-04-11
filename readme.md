@@ -29,9 +29,12 @@ docker run -d `
 ```angular2html
 cd migration
 cargo run -- generate add_status_to_subscriptions
+# or from source
+sea-orm-cli migrate generate create_subscription_tokens_table
 # Then change the script.
 cargo run -- up
-
+# or from source
+sea-orm-cli migrate up
 # status
 cargo run -- status
 # roll back
