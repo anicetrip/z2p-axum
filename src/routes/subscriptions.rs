@@ -5,6 +5,8 @@ use crate::{
     domain::{NewSubscriber, SubscriberEmail, SubscriberName},
     entity::subscriptions,
 };
+use anyhow::Context;
+use axum::response::{IntoResponse, Response};
 use axum::{Form, extract::State, http::StatusCode};
 use chrono::Utc;
 use fake::RngExt;
@@ -13,6 +15,45 @@ use fake::rand::rng;
 use sea_orm::{ActiveModelTrait, DatabaseTransaction, Set, TransactionTrait};
 use serde::Deserialize;
 use tracing;
+
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+
+    #[error(transparent)]
+    UnexpectedError(#[from] anyhow::Error),
+}
+
+impl std::fmt::Debug for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+
+fn error_chain_fmt(
+    e: &impl std::error::Error,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    writeln!(f, "{}\n", e)?;
+    let mut current = e.source();
+    while let Some(cause) = current {
+        writeln!(f, "Caused by:\n\t{}", cause)?;
+        current = cause.source();
+    }
+    Ok(())
+}
+
+impl IntoResponse for SubscribeError {
+    fn into_response(self) -> Response {
+        let status = match self {
+            SubscribeError::ValidationError(_) => StatusCode::BAD_REQUEST,
+            SubscribeError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+
+        (status, self.to_string()).into_response()
+    }
+}
 
 #[derive(Deserialize, Debug)]
 pub struct FormData {
@@ -31,32 +72,27 @@ pub struct FormData {
 pub async fn subscribe(
     State(state): State<AppState>,
     Form(form): Form<FormData>,
-) -> Result<StatusCode, StatusCode> {
-    let new_subscriber: NewSubscriber = form.try_into().map_err(|_| StatusCode::BAD_REQUEST)?;
+) -> Result<StatusCode, SubscribeError> {
+    let new_subscriber: NewSubscriber = form.try_into().map_err(SubscribeError::ValidationError)?;
 
     let db = &state.db;
     // 2️⃣ 开启事务（SeaORM 方式）
-    let txn = db
-        .begin()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let txn = db.begin().await.context("Failed to start transaction")?;
 
     // 3️⃣ 插入 subscriber
     let subscriber_id = insert_subscriber(&txn, &new_subscriber)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .context("Failed to insert subscriber")?;
     // 4️⃣ 生成 token
     let subscription_token = generate_subscription_token();
 
     // 5️⃣ 存 token
     store_token(&txn, subscriber_id, &subscription_token)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .context("Failed to commit transaction")?;
 
     // 6️⃣ 提交事务
-    txn.commit()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    txn.commit().await.context("Failed to commit transaction")?;
 
     // 7️⃣ 发邮件（事务之后）
     send_confirmation_email(
@@ -66,7 +102,7 @@ pub async fn subscribe(
         &subscription_token,
     )
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .context("Failed to send email")?;
 
     let _email_client = &state.email_client;
     let _base_url = &state.base_url;
