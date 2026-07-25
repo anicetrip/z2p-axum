@@ -21,7 +21,7 @@ members = [
 
 
 [workspace.dependencies]
-sea-orm = { version = "2.0.0-rc.38", default-features = false, features = [
+sea-orm = { version = "2.0.0", default-features = false, features = [
     "sqlx-mysql",
     "runtime-tokio-native-tls",
     "macros",
@@ -30,31 +30,31 @@ sea-orm = { version = "2.0.0-rc.38", default-features = false, features = [
     "debug-print",
 ] }
 
-sea-orm-migration = { version = "2.0.0-rc.38", default-features = false, features = [
+sea-orm-migration = { version = "2.0.0", default-features = false, features = [
     "sqlx-mysql",
 ] }
 
-sqlx = { version = "0.8.6", default-features = false, features = [
+sqlx = { version = "0.9.0", default-features = false, features = [
     "mysql",
     "runtime-tokio-native-tls"
 ] }
 [dependencies]
 axum = "0.8.9"
-reqwest = { version = "0.13.3", features = ["json"] }
-tokio = { version = "1.52.2", features = ["full"] }
-serde = { version = "1.0.228", features = ["derive"] }
+reqwest = { version = "0.13.4", features = ["json"] }
+tokio = { version = "1.53.1", features = ["full"] }
+serde = { version = "1.0.229", features = ["derive"] }
 sea-orm = { workspace = true }
-chrono = { version = "0.4.44", features = ["serde"] }
-uuid = { version = "1.23.1", features = ["v4", "serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+uuid = { version = "1.24.0", features = ["v4", "serde"] }
 
-config = "0.15.22"
+config = "0.15.25"
 
 tracing = "0.1.44"
 dotenvy = "0.15.7"  # 用于加载 .env 文件
 
 
 url = { version = "2.5.8", features = ["serde"] }
-tower-http = { version = "0.6.8", features = ["trace"] }
+tower-http = { version = "0.7.0", features = ["trace"] }
 
 secrecy = { version = "0.10.3", features = ["serde"] }
 
@@ -66,12 +66,12 @@ serde-aux = "4.7.0"
 claims = "0.8"
 validator = "0.20.0"
 fake = "5.1.0"
-unicode-segmentation = "1.13.2"
+unicode-segmentation = "1.13.3"
 proptest = "1.11"
 linkify = "0.11.0"
-serde_json = "1.0.149"
+serde_json = "1.0.151"
 wiremock = { version = "0.6.5", default-features = false }
 
 migration = { path = "migration" }
-thiserror = "2.0.18"
-anyhow = "1.0.102"
+thiserror = "2.0.19"
+anyhow = "1.0.104"
